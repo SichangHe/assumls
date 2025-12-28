@@ -1,0 +1,10 @@
+[package]
+name = "assumls"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+shame = "0.0.4"
+tokio = { version = "1.48.0", features = ["fs", "macros", "rt", "rt-multi-thread", "sync"] }
+tokio_gen_server = "0.5.0"
+tower-lsp = "0.20.0"
