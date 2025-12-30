@@ -4,5 +4,5 @@ expression: body
 ---
 status: Some(1)
 stdout:
-ASSUM.md:4:3: error: duplicate assumption `dup_case` in scope
+ASSUM.md:4:3: error: Duplicate definition of assumption `dup_case` in scope
 stderr:

@@ -7,8 +7,9 @@ use serde::Deserialize;
 use tokio::task::spawn_blocking;
 use tokio_gen_server::actor::{Actor, ActorEnv, ActorRef};
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionResponse, Documentation, Hover, HoverContents,
-    Location, MarkupContent, MarkupKind, Position, Range, TextEdit, Url, WorkspaceEdit,
+    CompletionItem, CompletionItemKind, CompletionResponse, DocumentHighlight,
+    DocumentHighlightKind, Documentation, Hover, HoverContents, Location, MarkupContent,
+    MarkupKind, Position, Range, TextEdit, Url, WorkspaceEdit,
 };
 use tracing::error;
 
@@ -153,6 +154,22 @@ impl IndexState {
         Some(out)
     }
 
+    pub fn highlights(&self, path: &Path, position: Position) -> Option<Vec<DocumentHighlight>> {
+        let tag = self.tag_at(path, position)?;
+        let mut out = Vec::new();
+        out.push(DocumentHighlight {
+            range: tag.range,
+            kind: Some(DocumentHighlightKind::TEXT),
+        });
+        if tag.name_range != tag.range {
+            out.push(DocumentHighlight {
+                range: tag.name_range,
+                kind: Some(DocumentHighlightKind::READ),
+            });
+        }
+        Some(out)
+    }
+
     pub fn rename(
         &self,
         path: &Path,
@@ -277,6 +294,10 @@ pub enum IndexCall {
         position: Position,
         include_declaration: bool,
     },
+    DocumentHighlight {
+        uri: Url,
+        position: Position,
+    },
     Rename {
         uri: Url,
         position: Position,
@@ -291,6 +312,7 @@ pub enum IndexReply {
     Completion(Option<CompletionResponse>),
     Definition(Vec<Location>),
     References(Vec<Location>),
+    DocumentHighlight(Vec<DocumentHighlight>),
     Rename(Option<WorkspaceEdit>),
     Diagnostics(DiagnosticsMap),
 }
@@ -376,6 +398,16 @@ impl Actor for AssumptionIndex {
                             .and_then(|p| state.references(&p, position, include_declaration))
                     });
                     let _ = reply_sender.send(IndexReply::References(locs.unwrap_or_default()));
+                }
+                IndexCall::DocumentHighlight { uri, position } => {
+                    let highlights = self.state.as_ref().and_then(|state| {
+                        uri.to_file_path()
+                            .ok()
+                            .and_then(|p| state.highlights(&p, position))
+                    });
+                    let _ = reply_sender.send(IndexReply::DocumentHighlight(
+                        highlights.unwrap_or_default(),
+                    ));
                 }
                 IndexCall::Rename {
                     uri,

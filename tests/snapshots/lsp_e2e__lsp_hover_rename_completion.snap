@@ -8,6 +8,34 @@ expression: snapshot
     "shared_name",
     "web_only"
   ],
+  "highlights": [
+    {
+      "kind": 1,
+      "range": {
+        "end": {
+          "character": 22,
+          "line": 0
+        },
+        "start": {
+          "character": 3,
+          "line": 0
+        }
+      }
+    },
+    {
+      "kind": 2,
+      "range": {
+        "end": {
+          "character": 22,
+          "line": 0
+        },
+        "start": {
+          "character": 11,
+          "line": 0
+        }
+      }
+    }
+  ],
   "hover": {
     "contents": {
       "kind": "markdown",

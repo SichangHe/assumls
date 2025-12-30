@@ -116,12 +116,13 @@ impl Backend {
             hover_provider: Some(HoverProviderCapability::Simple(true)),
             completion_provider: Some(CompletionOptions {
                 resolve_provider: Some(false),
-                trigger_characters: Some(vec!["@".into()]),
+                trigger_characters: Some(vec!["@".into(), ":".into()]),
                 ..CompletionOptions::default()
             }),
             definition_provider: Some(OneOf::Left(true)),
             references_provider: Some(OneOf::Left(true)),
             rename_provider: Some(OneOf::Left(true)),
+            document_highlight_provider: Some(OneOf::Left(true)),
             ..ServerCapabilities::default()
         }
     }
@@ -240,6 +241,28 @@ impl LanguageServer for Backend {
                 Ok(None)
             } else {
                 Ok(Some(locs))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> RpcResult<Option<Vec<DocumentHighlight>>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let reply = self
+            .index
+            .call(IndexCall::DocumentHighlight { uri, position })
+            .await
+            .map_err(Self::internal_error)?;
+        if let IndexReply::DocumentHighlight(highlights) = reply {
+            if highlights.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(highlights))
             }
         } else {
             Ok(None)
