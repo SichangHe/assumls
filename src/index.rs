@@ -8,7 +8,7 @@ use tokio::task::spawn_blocking;
 use tokio_gen_server::actor::{Actor, ActorEnv, ActorRef};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, Documentation, Hover, HoverContents,
-    MarkupContent, MarkupKind, Position, Range, TextEdit, Url, WorkspaceEdit,
+    Location, MarkupContent, MarkupKind, Position, Range, TextEdit, Url, WorkspaceEdit,
 };
 use tracing::error;
 
@@ -18,7 +18,6 @@ use crate::parser::{
 };
 
 pub type DiagnosticsMap = HashMap<PathBuf, Vec<AssumptionDiagnostic>>;
-
 type FileScopeMap = HashMap<PathBuf, PathBuf>;
 type TagHitsMap = HashMap<PathBuf, Vec<TagHit>>;
 type TagScanMaps = (FileScopeMap, TagHitsMap);
@@ -30,6 +29,8 @@ type RpcResult<T> = Result<T>;
 pub struct IndexState {
     /// Docs keyed by scope root and assumption name.
     scope_docs: HashMap<PathBuf, HashMap<String, AssumptionDoc>>,
+    /// Duplicate definitions keyed by scope root.
+    duplicate_defs: HashMap<PathBuf, Vec<AssumptionDoc>>,
     /// Mapping from file path to its scope root.
     file_scope: HashMap<PathBuf, PathBuf>,
     /// Tag occurrences per file.
@@ -40,12 +41,12 @@ pub struct IndexState {
 
 impl IndexState {
     fn docs_for_path(&self, path: &Path) -> Option<&HashMap<String, AssumptionDoc>> {
-        let scope = self.file_scope.get(path)?;
+        let scope = self.file_scope.get(&normalize_path(path.to_path_buf()))?;
         self.scope_docs.get(scope)
     }
 
     fn tag_at(&self, path: &Path, position: Position) -> Option<TagHit> {
-        let hits = self.tags.get(path)?;
+        let hits = self.tags.get(&normalize_path(path.to_path_buf()))?;
         hits.iter()
             .find(|hit| contains(&hit.range, position))
             .cloned()
@@ -55,7 +56,7 @@ impl IndexState {
         let tag = self.tag_at(path, position)?;
         let docs = self.docs_for_path(path)?;
         let doc = docs.get(&tag.name)?;
-        let value = format!("## {}\n{}", doc.heading, doc.body);
+        let value = doc.body.clone();
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -66,12 +67,18 @@ impl IndexState {
     }
 
     pub fn completion(&self, path: &Path) -> Option<CompletionResponse> {
-        let docs = self.docs_for_path(path)?;
-        let mut items: Vec<CompletionItem> = docs
-            .values()
-            .map(|doc| CompletionItem {
+        let mut items: Vec<CompletionItem> = vec![CompletionItem {
+            label: "ASSUME:".into(),
+            insert_text: Some("ASSUME:".into()),
+            detail: Some("Insert @ASSUME prefix.".into()),
+            kind: Some(CompletionItemKind::KEYWORD),
+            ..CompletionItem::default()
+        }];
+        if let Some(docs) = self.docs_for_path(path) {
+            items.extend(docs.values().map(|doc| CompletionItem {
                 label: doc.name.clone(),
                 insert_text: Some(doc.name.clone()),
+                filter_text: Some(format!("@ASSUME:{}", doc.name)),
                 detail: Some(doc.heading.clone()),
                 documentation: Some(Documentation::MarkupContent(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -79,10 +86,71 @@ impl IndexState {
                 })),
                 kind: Some(CompletionItemKind::TEXT),
                 ..CompletionItem::default()
-            })
-            .collect();
+            }));
+        }
         items.sort_by(|a, b| a.label.cmp(&b.label));
         Some(CompletionResponse::Array(items))
+    }
+
+    pub fn definition(&self, path: &Path, position: Position) -> Option<Vec<Location>> {
+        let tag = self.tag_at(path, position)?;
+        let doc = self
+            .docs_for_path(path)
+            .and_then(|docs| docs.get(&tag.name))?;
+        let uri = Url::from_file_path(&doc.path).ok()?;
+        Some(vec![Location {
+            uri,
+            range: doc.range,
+        }])
+    }
+
+    pub fn references(
+        &self,
+        path: &Path,
+        position: Position,
+        include_declaration: bool,
+    ) -> Option<Vec<Location>> {
+        let tag = self.tag_at(path, position)?;
+        let scope = self.file_scope.get(&normalize_path(path.to_path_buf()))?;
+        let decl = self
+            .docs_for_path(path)
+            .and_then(|docs| docs.get(&tag.name))
+            .map(|doc| (normalize_path(doc.path.clone()), doc.range));
+        let mut out = Vec::new();
+        if include_declaration
+            && let Some(doc) = self
+                .docs_for_path(path)
+                .and_then(|docs| docs.get(&tag.name))
+            && let Ok(uri) = Url::from_file_path(&doc.path)
+        {
+            out.push(Location {
+                uri,
+                range: doc.range,
+            });
+        }
+        for (p, hits) in self
+            .tags
+            .iter()
+            .filter(|(p, _)| self.file_scope.get(*p) == Some(scope))
+        {
+            let norm_path = normalize_path(p.clone());
+            let Ok(uri) = Url::from_file_path(&norm_path) else {
+                continue;
+            };
+            for hit in hits.iter().filter(|h| h.name == tag.name) {
+                if let Some((decl_path, decl_range)) = &decl
+                    && decl_path == &norm_path
+                    && decl_range == &hit.range
+                {
+                    continue;
+                }
+                out.push(Location {
+                    uri: uri.clone(),
+                    range: hit.range,
+                });
+            }
+        }
+        Some(out)
     }
 
     pub fn rename(
@@ -92,7 +160,11 @@ impl IndexState {
         new_name: String,
     ) -> Option<WorkspaceEdit> {
         let tag = self.tag_at(path, position)?;
-        let scope = self.file_scope.get(path)?;
+        let scope = self.file_scope.get(&normalize_path(path.to_path_buf()))?;
+        let decl = self
+            .docs_for_path(path)
+            .and_then(|docs| docs.get(&tag.name))
+            .map(|doc| (normalize_path(doc.path.clone()), doc.range));
         let mut edits: HashMap<Url, Vec<TextEdit>> = HashMap::new();
         if let Some(docs) = self.docs_for_path(path)
             && let Some(doc) = docs.get(&tag.name)
@@ -108,14 +180,24 @@ impl IndexState {
             .iter()
             .filter(|(p, _)| self.file_scope.get(*p) == Some(scope))
         {
-            let Some(url) = Url::from_file_path(p).ok() else {
+            let norm_path = normalize_path(p.clone());
+            let Some(url) = Url::from_file_path(&norm_path).ok() else {
                 continue;
             };
             let tag_edits: Vec<TextEdit> = hits
                 .iter()
                 .filter(|hit| hit.name == tag.name)
+                .filter(|hit| {
+                    if let Some((decl_path, decl_range)) = &decl
+                        && decl_path == &norm_path
+                        && decl_range == &hit.range
+                    {
+                        return false;
+                    }
+                    true
+                })
                 .map(|hit| TextEdit {
-                    range: hit.range,
+                    range: hit.name_range,
                     new_text: new_name.clone(),
                 })
                 .collect();
@@ -166,37 +248,50 @@ impl Default for AssumptionIndex {
 
 pub enum IndexCall {
     /// Set workspace root and refresh.
-    Initialize { root: PathBuf },
+    Initialize {
+        root: PathBuf,
+    },
     /// Apply overlay content for a file.
-    ApplyOverlay { path: PathBuf, text: String },
+    ApplyOverlay {
+        path: PathBuf,
+        text: String,
+    },
     /// Drop overlay for a file.
-    DropOverlay { path: PathBuf },
-    /// Rebuild index with current state.
+    DropOverlay {
+        path: PathBuf,
+    },
     Refresh,
-    /// Request hover details at a position.
-    Hover { uri: Url, position: Position },
-    /// Request completion items for a file.
-    Completion { uri: Url },
-    /// Request rename edits for a tag.
+    Hover {
+        uri: Url,
+        position: Position,
+    },
+    Completion {
+        uri: Url,
+    },
+    Definition {
+        uri: Url,
+        position: Position,
+    },
+    References {
+        uri: Url,
+        position: Position,
+        include_declaration: bool,
+    },
     Rename {
         uri: Url,
         position: Position,
         new_name: String,
     },
-    /// Retrieve current diagnostics snapshot.
     Diagnostics,
 }
 
 pub enum IndexReply {
-    /// Completed refresh with diagnostics.
     Refreshed(DiagnosticsMap),
-    /// Hover result.
     Hover(Option<Hover>),
-    /// Completion result.
     Completion(Option<CompletionResponse>),
-    /// Rename edits.
+    Definition(Vec<Location>),
+    References(Vec<Location>),
     Rename(Option<WorkspaceEdit>),
-    /// Diagnostics snapshot.
     Diagnostics(DiagnosticsMap),
 }
 
@@ -235,12 +330,12 @@ impl Actor for AssumptionIndex {
                     let _ = reply_sender.send(IndexReply::Refreshed(diags));
                 }
                 IndexCall::ApplyOverlay { path, text } => {
-                    self.overlays.insert(path, text);
+                    self.overlays.insert(normalize_path(path), text);
                     let diags = self.refresh().await;
                     let _ = reply_sender.send(IndexReply::Refreshed(diags));
                 }
                 IndexCall::DropOverlay { path } => {
-                    self.overlays.remove(&path);
+                    self.overlays.remove(&normalize_path(path));
                     let diags = self.refresh().await;
                     let _ = reply_sender.send(IndexReply::Refreshed(diags));
                 }
@@ -261,6 +356,26 @@ impl Actor for AssumptionIndex {
                         uri.to_file_path().ok().and_then(|p| state.completion(&p))
                     });
                     let _ = reply_sender.send(IndexReply::Completion(items));
+                }
+                IndexCall::Definition { uri, position } => {
+                    let locs = self.state.as_ref().and_then(|state| {
+                        uri.to_file_path()
+                            .ok()
+                            .and_then(|p| state.definition(&p, position))
+                    });
+                    let _ = reply_sender.send(IndexReply::Definition(locs.unwrap_or_default()));
+                }
+                IndexCall::References {
+                    uri,
+                    position,
+                    include_declaration,
+                } => {
+                    let locs = self.state.as_ref().and_then(|state| {
+                        uri.to_file_path()
+                            .ok()
+                            .and_then(|p| state.references(&p, position, include_declaration))
+                    });
+                    let _ = reply_sender.send(IndexReply::References(locs.unwrap_or_default()));
                 }
                 IndexCall::Rename {
                     uri,
@@ -304,40 +419,74 @@ fn collect_index(root: PathBuf, overlays: HashMap<PathBuf, String>) -> Result<In
         let Some(content) = content_for(&path, &overlays)? else {
             continue;
         };
+        let path = normalize_path(path);
         let docs = parse_assumptions_content(&content, &path)?;
-        let scope = path.parent().unwrap_or(&root).to_path_buf();
+        let scope = normalize_path(path.parent().unwrap_or(&root).to_path_buf());
         scope_roots.insert(scope.clone());
-        state.scope_docs.insert(
-            scope,
-            docs.into_iter()
-                .map(|doc| (doc.name.clone(), doc))
-                .collect(),
-        );
+        state.file_scope.insert(path.clone(), scope.clone());
+        let mut seen = HashSet::new();
+        let mut dupes = Vec::new();
+        let mut doc_map = HashMap::new();
+        for doc in docs {
+            if !seen.insert(doc.name.clone()) {
+                dupes.push(doc.clone());
+            }
+            doc_map.insert(doc.name.clone(), doc);
+        }
+        if !dupes.is_empty() {
+            state.duplicate_defs.insert(scope.clone(), dupes);
+        }
+        let def_hits: Vec<TagHit> = doc_map
+            .values()
+            .map(|doc| TagHit {
+                name: doc.name.clone(),
+                range: doc.range,
+                name_range: doc.range,
+            })
+            .collect();
+        if !def_hits.is_empty() {
+            state.tags.entry(path.clone()).or_default().extend(def_hits);
+        }
+        state.scope_docs.insert(scope, doc_map);
     }
-    let overlay_paths: HashSet<PathBuf> = overlays.keys().cloned().collect();
+    let overlay_paths: HashSet<PathBuf> = overlays.keys().cloned().map(normalize_path).collect();
     for (path, text) in overlays.iter() {
-        if !path.starts_with(&root) || path.file_name() == Some(std::ffi::OsStr::new("ASSUM.md")) {
+        if !path.starts_with(&root) {
             continue;
         }
-        let Some(scope) = find_scope(&scope_roots, path) else {
+        let path = normalize_path(path.clone());
+        let Some(scope) = find_scope(&scope_roots, &path) else {
             continue;
         };
         let hits = scan_tags_content(text);
         state.file_scope.insert(path.clone(), scope.clone());
         if !hits.is_empty() {
-            state.tags.insert(path.clone(), hits);
+            state.tags.entry(path.clone()).or_default().extend(hits);
         }
     }
     let (file_scopes, tag_hits) = tags_from_rg(&root, &scope_roots, &overlay_paths)?;
     state.file_scope.extend(file_scopes);
-    state.tags.extend(tag_hits);
+    for (path, hits) in tag_hits {
+        state.tags.entry(path).or_default().extend(hits);
+    }
     state.diagnostics = compute_diagnostics(&state);
     Ok(state)
 }
 
-/// Compute warnings for unused definitions and errors for undefined references.
+/// Compute errors for duplicates/undefined and warnings for unused definitions.
 fn compute_diagnostics(state: &IndexState) -> DiagnosticsMap {
     let mut diags: DiagnosticsMap = HashMap::new();
+    for dupes in state.duplicate_defs.values() {
+        for doc in dupes {
+            push_diag(
+                &mut diags,
+                &doc.path,
+                doc.range,
+                format!("Duplicate definition of assumption `{}` in scope", doc.name),
+                DiagSeverity::Error,
+            );
+        }
+    }
     for (path, hits) in &state.tags {
         let docs = state.docs_for_path(path);
         for hit in hits {
@@ -361,8 +510,12 @@ fn compute_diagnostics(state: &IndexState) -> DiagnosticsMap {
             .filter(|(p, _)| state.file_scope.get(*p) == Some(scope))
         {
             for hit in hits {
-                if docs.contains_key(&hit.name) {
-                    used.insert(hit.name.clone());
+                if let Some(doc) = docs.get(&hit.name) {
+                    let is_decl = normalize_path(doc.path.clone()) == normalize_path(_path.clone())
+                        && doc.range == hit.range;
+                    if !is_decl {
+                        used.insert(hit.name.clone());
+                    }
                 }
             }
         }
@@ -487,9 +640,7 @@ fn tags_from_rg(
             path = root.join(path);
         }
         path = normalize_path(path);
-        if overlay_paths.contains(&path)
-            || path.file_name() == Some(std::ffi::OsStr::new("ASSUM.md"))
-        {
+        if overlay_paths.contains(&path) {
             continue;
         }
         let Some(scope) = find_scope(scope_roots, &path) else {
@@ -505,6 +656,8 @@ fn tags_from_rg(
                 let base = data.line_number.saturating_sub(1) as u32;
                 hit.range.start.line += base;
                 hit.range.end.line += base;
+                hit.name_range.start.line += base;
+                hit.name_range.end.line += base;
                 hit
             })
             .collect();

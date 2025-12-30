@@ -1,12 +1,11 @@
 ---
 source: tests/check_cli.rs
-assertion_line: 43
 expression: body
 ---
 status: Some(1)
 stdout:
 ASSUM.md:6:3: warning: assumption `unused_root` unused
-main.rs:2:12: error: assumption `missing_root` not defined in scope
-services/api/handler.py:2:11: error: assumption `ghost_api` not defined in scope
-web/app.js:3:12: error: assumption `missing_web` not defined in scope
+main.rs:2:4: error: assumption `missing_root` not defined in scope
+services/api/handler.py:2:3: error: assumption `ghost_api` not defined in scope
+web/app.js:3:4: error: assumption `missing_web` not defined in scope
 stderr:

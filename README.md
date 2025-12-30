@@ -32,6 +32,7 @@ exposes LSP features (hover, completion, rename) plus a CLI checker.
 ## Development
 
 - Format and test: `cargo fmt && cargo test`
+- Clippy (CI-equivalent): `cargo clippy --all-targets --all-features`
 - Update insta snapshots when outputs change: `cargo insta review`
 - External tools required: `fd` and `rg` on PATH.
 

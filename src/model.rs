@@ -34,8 +34,10 @@ pub struct AssumptionDoc {
 pub struct TagHit {
     /// Referenced assumption name.
     pub name: String,
-    /// Range covering only the name.
+    /// Range covering the entire @ASSUME tag.
     pub range: Range,
+    /// Range covering only the referenced name.
+    pub name_range: Range,
 }
 
 /// Severity levels for diagnostics.

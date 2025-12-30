@@ -69,7 +69,11 @@ async fn lsp_hover_rename_completion() -> Result<()> {
     let ws = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_data/lsp_ws");
     let file = ws.join("web/app.js");
     let uri = Url::from_file_path(&file).unwrap().to_string();
+    let assum = ws.join("web/ASSUM.md");
+    let assum_uri = Url::from_file_path(&assum).unwrap().to_string();
     let root_uri = Url::from_file_path(&ws).unwrap().to_string();
+    let app_text = std::fs::read_to_string(&file)?;
+    let assum_text = std::fs::read_to_string(&assum)?;
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("assumls"));
     cmd.kill_on_drop(true);
@@ -102,7 +106,21 @@ async fn lsp_hover_rename_completion() -> Result<()> {
                 "uri": uri,
                 "languageId": "javascript",
                 "version": 1,
-                "text": "// @ASSUME:shared_name\nfunction render() {\n  // @ASSUME:web_only\n  return \"render\";\n}\n",
+                "text": app_text,
+            }
+        }),
+    )
+    .await?;
+
+    notify(
+        &mut stdin,
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": assum_uri,
+                "languageId": "markdown",
+                "version": 1,
+                "text": assum_text,
             }
         }),
     )
@@ -147,6 +165,48 @@ async fn lsp_hover_rename_completion() -> Result<()> {
     request(
         &mut stdin,
         4,
+        "textDocument/references",
+        json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": 0, "character": 12},
+            "context": {"includeDeclaration": true},
+        }),
+    )
+    .await?;
+    let references_from_use =
+        timeout(Duration::from_secs(5), read_response(&mut stdout, 4)).await??;
+
+    request(
+        &mut stdin,
+        5,
+        "textDocument/references",
+        json!({
+            "textDocument": {"uri": assum_uri},
+            "position": {"line": 0, "character": 4},
+            "context": {"includeDeclaration": true},
+        }),
+    )
+    .await?;
+    let references_from_definition =
+        timeout(Duration::from_secs(5), read_response(&mut stdout, 5)).await??;
+
+    request(
+        &mut stdin,
+        6,
+        "textDocument/references",
+        json!({
+            "textDocument": {"uri": assum_uri},
+            "position": {"line": 3, "character": 20},
+            "context": {"includeDeclaration": true},
+        }),
+    )
+    .await?;
+    let references_web_only =
+        timeout(Duration::from_secs(5), read_response(&mut stdout, 6)).await??;
+
+    request(
+        &mut stdin,
+        7,
         "textDocument/rename",
         json!({
             "textDocument": {"uri": uri},
@@ -155,15 +215,27 @@ async fn lsp_hover_rename_completion() -> Result<()> {
         }),
     )
     .await?;
-    let rename = timeout(Duration::from_secs(5), read_response(&mut stdout, 4)).await??;
+    let rename = timeout(Duration::from_secs(5), read_response(&mut stdout, 7)).await??;
 
-    request(&mut stdin, 5, "shutdown", json!({})).await?;
-    let _ = timeout(Duration::from_secs(5), read_response(&mut stdout, 5)).await??;
+    request(&mut stdin, 8, "shutdown", json!({})).await?;
+    let _ = timeout(Duration::from_secs(5), read_response(&mut stdout, 8)).await??;
     notify(&mut stdin, "exit", json!({})).await?;
 
     let snapshot = json!({
         "hover": hover.get("result"),
         "completion_labels": labels,
+        "references_from_use": sort_locations_value(sanitize_paths(
+            references_from_use.get("result").cloned().unwrap_or(Value::Null),
+            &root_uri,
+        )),
+        "references_from_definition": sort_locations_value(sanitize_paths(
+            references_from_definition.get("result").cloned().unwrap_or(Value::Null),
+            &root_uri,
+        )),
+        "references_web_only": sort_locations_value(sanitize_paths(
+            references_web_only.get("result").cloned().unwrap_or(Value::Null),
+            &root_uri,
+        )),
         "rename": stabilize_rename(sanitize_paths(rename.get("result").cloned().unwrap_or(Value::Null), &root_uri)),
     });
     assert_json_snapshot!("lsp_hover_rename_completion", snapshot);
@@ -172,19 +244,19 @@ async fn lsp_hover_rename_completion() -> Result<()> {
 
 fn stabilize_rename(value: Value) -> Value {
     let mut value = value;
-    if let Some(map) = value.as_object_mut() {
-        if let Some(changes) = map.get_mut("changes").and_then(|v| v.as_object_mut()) {
-            let mut entries: Vec<(String, Value)> = std::mem::take(changes).into_iter().collect();
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
-            let mut new_changes = serde_json::Map::new();
-            for (k, mut v) in entries {
-                if let Some(edits) = v.as_array_mut() {
-                    edits.sort_by(|a, b| edit_sort_key(a).cmp(&edit_sort_key(b)));
-                }
-                new_changes.insert(k, v);
+    if let Some(map) = value.as_object_mut()
+        && let Some(changes) = map.get_mut("changes").and_then(|v| v.as_object_mut())
+    {
+        let mut entries: Vec<(String, Value)> = std::mem::take(changes).into_iter().collect();
+        entries.sort_by_key(|a| a.0.clone());
+        let mut new_changes = serde_json::Map::new();
+        for (k, mut v) in entries {
+            if let Some(edits) = v.as_array_mut() {
+                edits.sort_by_key(edit_sort_key);
             }
-            *changes = new_changes;
+            new_changes.insert(k, v);
         }
+        *changes = new_changes;
     }
     value
 }
@@ -241,4 +313,44 @@ fn sanitize_paths(value: Value, root_uri: &str) -> Value {
         }
         other => other,
     }
+}
+
+fn sort_locations_value(mut value: Value) -> Value {
+    if let Some(arr) = value.as_array_mut() {
+        arr.sort_by_key(location_sort_key);
+    }
+    value
+}
+
+fn location_sort_key(value: &Value) -> (String, i64, i64, i64, i64) {
+    let uri = value
+        .get("uri")
+        .and_then(|u| u.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let start_line = value
+        .get("range")
+        .and_then(|r| r.get("start"))
+        .and_then(|p| p.get("line"))
+        .and_then(|l| l.as_i64())
+        .unwrap_or_default();
+    let start_char = value
+        .get("range")
+        .and_then(|r| r.get("start"))
+        .and_then(|p| p.get("character"))
+        .and_then(|l| l.as_i64())
+        .unwrap_or_default();
+    let end_line = value
+        .get("range")
+        .and_then(|r| r.get("end"))
+        .and_then(|p| p.get("line"))
+        .and_then(|l| l.as_i64())
+        .unwrap_or_default();
+    let end_char = value
+        .get("range")
+        .and_then(|r| r.get("end"))
+        .and_then(|p| p.get("character"))
+        .and_then(|l| l.as_i64())
+        .unwrap_or_default();
+    (uri, start_line, start_char, end_line, end_char)
 }

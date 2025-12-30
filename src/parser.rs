@@ -91,18 +91,33 @@ pub fn scan_tags_content(content: &str) -> Vec<TagHit> {
                 offset = name_start;
                 continue;
             }
+            let end_char = name_start + name.len();
             let range = Range {
+                start: Position {
+                    line: line_idx as u32,
+                    character: start as u32,
+                },
+                end: Position {
+                    line: line_idx as u32,
+                    character: end_char as u32,
+                },
+            };
+            let name_range = Range {
                 start: Position {
                     line: line_idx as u32,
                     character: name_start as u32,
                 },
                 end: Position {
                     line: line_idx as u32,
-                    character: (name_start + name.len()) as u32,
+                    character: end_char as u32,
                 },
             };
             let name_len = name.len();
-            hits.push(TagHit { name, range });
+            hits.push(TagHit {
+                name,
+                range,
+                name_range,
+            });
             offset = name_start + name_len;
         }
     }
@@ -192,8 +207,10 @@ mod tests {
         let hit = &hits[0];
         assert_eq!(hit.name, "foo_bar");
         assert_eq!(hit.range.start.line, 0);
-        assert_eq!(hit.range.start.character, 10);
+        assert_eq!(hit.range.start.character, 2);
         assert_eq!(hit.range.end.character, 17);
+        assert_eq!(hit.name_range.start.character, 10);
+        assert_eq!(hit.name_range.end.character, 17);
     }
 
     #[test]

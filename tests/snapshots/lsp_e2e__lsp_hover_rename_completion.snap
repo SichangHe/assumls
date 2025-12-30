@@ -1,17 +1,17 @@
 ---
 source: tests/lsp_e2e.rs
-assertion_line: 169
 expression: snapshot
 ---
 {
   "completion_labels": [
+    "ASSUME:",
     "shared_name",
     "web_only"
   ],
   "hover": {
     "contents": {
       "kind": "markdown",
-      "value": "## shared_name\nWeb-specific shared_name description.\n\nAdditional paragraph describing UI constraints.\n"
+      "value": "Web-specific shared_name description.\n\nRelies on @ASSUME:web_only for shared UI rules.\n\nAdditional paragraph describing UI constraints.\n"
     },
     "range": {
       "end": {
@@ -19,11 +19,134 @@ expression: snapshot
         "line": 0
       },
       "start": {
-        "character": 11,
+        "character": 3,
         "line": 0
       }
     }
   },
+  "references_from_definition": [
+    {
+      "range": {
+        "end": {
+          "character": 13,
+          "line": 0
+        },
+        "start": {
+          "character": 2,
+          "line": 0
+        }
+      },
+      "uri": "<ROOT>/web/ASSUM.md"
+    },
+    {
+      "range": {
+        "end": {
+          "character": 22,
+          "line": 0
+        },
+        "start": {
+          "character": 3,
+          "line": 0
+        }
+      },
+      "uri": "<ROOT>/web/app.js"
+    },
+    {
+      "range": {
+        "end": {
+          "character": 24,
+          "line": 7
+        },
+        "start": {
+          "character": 5,
+          "line": 7
+        }
+      },
+      "uri": "<ROOT>/web/app.js"
+    }
+  ],
+  "references_from_use": [
+    {
+      "range": {
+        "end": {
+          "character": 13,
+          "line": 0
+        },
+        "start": {
+          "character": 2,
+          "line": 0
+        }
+      },
+      "uri": "<ROOT>/web/ASSUM.md"
+    },
+    {
+      "range": {
+        "end": {
+          "character": 22,
+          "line": 0
+        },
+        "start": {
+          "character": 3,
+          "line": 0
+        }
+      },
+      "uri": "<ROOT>/web/app.js"
+    },
+    {
+      "range": {
+        "end": {
+          "character": 24,
+          "line": 7
+        },
+        "start": {
+          "character": 5,
+          "line": 7
+        }
+      },
+      "uri": "<ROOT>/web/app.js"
+    }
+  ],
+  "references_web_only": [
+    {
+      "range": {
+        "end": {
+          "character": 26,
+          "line": 3
+        },
+        "start": {
+          "character": 10,
+          "line": 3
+        }
+      },
+      "uri": "<ROOT>/web/ASSUM.md"
+    },
+    {
+      "range": {
+        "end": {
+          "character": 10,
+          "line": 7
+        },
+        "start": {
+          "character": 2,
+          "line": 7
+        }
+      },
+      "uri": "<ROOT>/web/ASSUM.md"
+    },
+    {
+      "range": {
+        "end": {
+          "character": 21,
+          "line": 2
+        },
+        "start": {
+          "character": 5,
+          "line": 2
+        }
+      },
+      "uri": "<ROOT>/web/app.js"
+    }
+  ],
   "rename": {
     "changes": {
       "<ROOT>/web/ASSUM.md": [
@@ -52,6 +175,19 @@ expression: snapshot
             "start": {
               "character": 11,
               "line": 0
+            }
+          }
+        },
+        {
+          "newText": "shared_web",
+          "range": {
+            "end": {
+              "character": 24,
+              "line": 7
+            },
+            "start": {
+              "character": 13,
+              "line": 7
             }
           }
         }

@@ -63,3 +63,22 @@ fn check_errors_when_tools_missing() -> Result<()> {
     assert_snapshot!("check_missing_tools", body);
     Ok(())
 }
+
+#[test]
+fn check_fails_on_duplicate_definition() -> Result<()> {
+    let assert = Command::new(assert_cmd::cargo::cargo_bin!("assumls"))
+        .env("RUST_LOG", "off")
+        .arg("check")
+        .arg(ws("test_data/cli_duplicate"))
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    let body = format!(
+        "status: {:?}\nstdout:\n{}stderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_snapshot!("check_duplicate_def", body);
+    Ok(())
+}

@@ -2,5 +2,5 @@
 - Paths: CLI prints workspace-relative paths when the root can be canonicalized.
 - External deps: `fd`, `rg` must be available.
 - Lint/tests: `cargo fmt && cargo test`; snapshot updates via `cargo insta review` when outputs change.
-- LSP: default command (`cargo run`) starts stdio LSP; hover/completion/rename read from the index built with the current root and overlays.
+- LSP: default command (`cargo run`) starts stdio LSP; hover (Markdown), completion, rename, goto definition, and references use the indexed docs; diagnostics include hints for unused assumptions.
 - Code map: see [codebase_index.md](codebase_index.md) for module and fixture overview.

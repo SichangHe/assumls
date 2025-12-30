@@ -1,0 +1,8 @@
+---
+source: tests/check_cli.rs
+expression: body
+---
+status: Some(1)
+stdout:
+ASSUM.md:4:3: error: duplicate assumption `dup_case` in scope
+stderr:

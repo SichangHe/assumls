@@ -119,6 +119,8 @@ impl Backend {
                 trigger_characters: Some(vec!["@".into()]),
                 ..CompletionOptions::default()
             }),
+            definition_provider: Some(OneOf::Left(true)),
+            references_provider: Some(OneOf::Left(true)),
             rename_provider: Some(OneOf::Left(true)),
             ..ServerCapabilities::default()
         }
@@ -193,6 +195,52 @@ impl LanguageServer for Backend {
             .map_err(Self::internal_error)?;
         if let IndexReply::Completion(items) = reply {
             Ok(items)
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> RpcResult<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let reply = self
+            .index
+            .call(IndexCall::Definition { uri, position })
+            .await
+            .map_err(Self::internal_error)?;
+        if let IndexReply::Definition(locs) = reply {
+            if locs.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(GotoDefinitionResponse::Array(locs)))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn references(&self, params: ReferenceParams) -> RpcResult<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let include_declaration = params.context.include_declaration;
+        let reply = self
+            .index
+            .call(IndexCall::References {
+                uri,
+                position,
+                include_declaration,
+            })
+            .await
+            .map_err(Self::internal_error)?;
+        if let IndexReply::References(locs) = reply {
+            if locs.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(locs))
+            }
         } else {
             Ok(None)
         }
@@ -273,18 +321,29 @@ pub async fn run_stdio(fallback_root: Option<PathBuf>) -> RpcResult<()> {
 
 /// Convert internal diagnostic to an LSP diagnostic.
 fn to_lsp_diag(diag: &AssumptionDiagnostic) -> Diagnostic {
+    let is_unused = diag.message.contains("unused");
     Diagnostic {
         range: diag.range,
         severity: Some(match diag.severity {
             DiagSeverity::Error => DiagnosticSeverity::ERROR,
-            DiagSeverity::Warning => DiagnosticSeverity::WARNING,
+            DiagSeverity::Warning => {
+                if is_unused {
+                    DiagnosticSeverity::HINT
+                } else {
+                    DiagnosticSeverity::WARNING
+                }
+            }
         }),
         code: None,
         code_description: None,
         source: Some("AssumLS".into()),
         message: diag.message.clone(),
         related_information: None,
-        tags: None,
+        tags: if is_unused {
+            Some(vec![DiagnosticTag::UNNECESSARY])
+        } else {
+            None
+        },
         data: None,
     }
 }
