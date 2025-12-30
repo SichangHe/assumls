@@ -102,7 +102,7 @@ async fn lsp_hover_rename_completion() -> Result<()> {
                 "uri": uri,
                 "languageId": "javascript",
                 "version": 1,
-                "text": "@ASSUME shared_name\nfunction render() {\n  return \"@ASSUME web_only\";\n}\n",
+                "text": "// @ASSUME:shared_name\nfunction render() {\n  // @ASSUME:web_only\n  return \"render\";\n}\n",
             }
         }),
     )
@@ -114,7 +114,7 @@ async fn lsp_hover_rename_completion() -> Result<()> {
         "textDocument/hover",
         json!({
             "textDocument": {"uri": uri},
-            "position": {"line": 0, "character": 10},
+            "position": {"line": 0, "character": 12},
         }),
     )
     .await?;
@@ -150,7 +150,7 @@ async fn lsp_hover_rename_completion() -> Result<()> {
         "textDocument/rename",
         json!({
             "textDocument": {"uri": uri},
-            "position": {"line": 0, "character": 10},
+            "position": {"line": 0, "character": 12},
             "newName": "shared_web",
         }),
     )

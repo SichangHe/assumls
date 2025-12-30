@@ -1,6 +1,6 @@
 - [src/lib.rs](src/lib.rs): module wiring and public exports for LSP and lint entrypoints.
 - [src/model.rs](src/model.rs): core data structs for assumption docs, tag hits, and diagnostics.
-- [src/parser.rs](src/parser.rs): parses ASSUM.md headings, scans @ASSUME tags, resolves scopes, and file ignores.
+- [src/parser.rs](src/parser.rs): parses ASSUM.md headings, scans @ASSUME:<name> tags, resolves scopes, and file ignores.
 - [src/index.rs](src/index.rs): builds scoped index, sorts completions, computes diagnostics, and serves hover/completion/rename via actor.
 - [src/lsp.rs](src/lsp.rs): LSP server backend, manages overlays, publishes diagnostics, stdio runner.
 - [src/lint.rs](src/lint.rs): static lint entry that reuses the index diagnostics and prints CLI findings using workspace-relative paths when possible.

@@ -74,12 +74,12 @@ pub fn parse_assumptions_content(content: &str, path: &Path) -> Result<Vec<Assum
     Ok(docs)
 }
 
-/// Find @ASSUME tags in a file buffer and return name ranges.
+/// Find @ASSUME:<name> tags in a file buffer and return name ranges.
 pub fn scan_tags_content(content: &str) -> Vec<TagHit> {
     let mut hits = Vec::new();
     for (line_idx, line) in content.lines().enumerate() {
         let mut offset = 0;
-        while let Some(pos) = line[offset..].find("@ASSUME ") {
+        while let Some(pos) = line[offset..].find("@ASSUME:") {
             let start = offset + pos;
             let name_start = start + 8;
             let rest = &line[name_start..];
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn scans_tags_with_name_only_range() {
-        let hits = scan_tags_content("a @ASSUME foo_bar rest");
+        let hits = scan_tags_content("a @ASSUME:foo_bar rest");
         assert_eq!(hits.len(), 1);
         let hit = &hits[0];
         assert_eq!(hit.name, "foo_bar");

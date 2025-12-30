@@ -1,4 +1,4 @@
-// @ASSUME core_shared
+// @ASSUME:core_shared
 fn main() {
-	// @ASSUME infra_base
+	// @ASSUME:infra_base
 }

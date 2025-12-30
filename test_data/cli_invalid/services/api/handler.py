@@ -1,2 +1,2 @@
-# @ASSUME shared_name
-# @ASSUME ghost_api
+# @ASSUME:shared_name
+# @ASSUME:ghost_api

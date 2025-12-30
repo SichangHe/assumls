@@ -1,2 +1,2 @@
 # simple handler
-# @ASSUME shared_name
+# @ASSUME:shared_name

@@ -1,5 +1,5 @@
-// @ASSUME shared_name
+// @ASSUME:shared_name
 function ui() {
-  // @ASSUME ui_only
+  // @ASSUME:ui_only
   return "render";
 }

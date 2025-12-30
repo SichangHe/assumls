@@ -19,6 +19,10 @@ use crate::parser::{
 
 pub type DiagnosticsMap = HashMap<PathBuf, Vec<AssumptionDiagnostic>>;
 
+type FileScopeMap = HashMap<PathBuf, PathBuf>;
+type TagHitsMap = HashMap<PathBuf, Vec<TagHit>>;
+type TagScanMaps = (FileScopeMap, TagHitsMap);
+
 type RpcResult<T> = Result<T>;
 
 /// Cached index of assumptions, tags, and diagnostics.
@@ -456,14 +460,14 @@ fn tags_from_rg(
     root: &Path,
     scope_roots: &HashSet<PathBuf>,
     overlay_paths: &HashSet<PathBuf>,
-) -> Result<(HashMap<PathBuf, PathBuf>, HashMap<PathBuf, Vec<TagHit>>)> {
-    let mut file_scope = HashMap::new();
-    let mut tags: HashMap<PathBuf, Vec<TagHit>> = HashMap::new();
+) -> Result<TagScanMaps> {
+    let mut file_scope: FileScopeMap = HashMap::new();
+    let mut tags: TagHitsMap = HashMap::new();
     let output = Command::new("rg")
         .arg("--json")
         .arg("--no-heading")
         .arg("--color=never")
-        .arg("@ASSUME [A-Za-z0-9_]+")
+        .arg("@ASSUME:[A-Za-z0-9_]+")
         .arg(".")
         .current_dir(root)
         .output()

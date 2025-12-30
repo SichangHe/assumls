@@ -1,5 +1,5 @@
-// @ASSUME shared_name
+// @ASSUME:shared_name
 function render() {
-  // @ASSUME web_only
+  // @ASSUME:web_only
   return "render";
 }

@@ -1,4 +1,4 @@
 export function route() {
-  // @ASSUME api_only
+  // @ASSUME:api_only
   return "ok";
 }
