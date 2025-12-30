@@ -1,5 +1,6 @@
 ---
 source: tests/lsp_e2e.rs
+assertion_line: 266
 expression: snapshot
 ---
 {
@@ -221,5 +222,39 @@ expression: snapshot
         }
       ]
     }
+  },
+  "semantic_tokens": {
+    "data": [
+      0,
+      3,
+      8,
+      0,
+      0,
+      0,
+      8,
+      11,
+      1,
+      0,
+      2,
+      5,
+      8,
+      0,
+      0,
+      0,
+      8,
+      8,
+      1,
+      0,
+      5,
+      5,
+      8,
+      0,
+      0,
+      0,
+      8,
+      11,
+      1,
+      0
+    ]
   }
 }

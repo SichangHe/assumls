@@ -9,7 +9,7 @@ use tokio_gen_server::actor::{Actor, ActorEnv, ActorRef};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, DocumentHighlight,
     DocumentHighlightKind, Documentation, Hover, HoverContents, Location, MarkupContent,
-    MarkupKind, Position, Range, TextEdit, Url, WorkspaceEdit,
+    MarkupKind, Position, Range, SemanticTokens, TextEdit, Url, WorkspaceEdit,
 };
 use tracing::error;
 
@@ -170,6 +170,57 @@ impl IndexState {
         Some(out)
     }
 
+    pub fn semantic_tokens(&self, path: &Path) -> Option<SemanticTokens> {
+        let mut hits = self.tags.get(&normalize_path(path.to_path_buf()))?.clone();
+        hits.sort_by_key(|h| (h.range.start.line, h.range.start.character));
+        let mut data: Vec<tower_lsp::lsp_types::SemanticToken> = Vec::new();
+        let mut prev_line = 0u32;
+        let mut prev_start = 0u32;
+        let mut first = true;
+        for hit in hits {
+            let keyword_len = hit
+                .name_range
+                .start
+                .character
+                .saturating_sub(hit.range.start.character);
+            if keyword_len > 0 {
+                let (dl, ds) = delta(
+                    hit.range.start.line,
+                    hit.range.start.character,
+                    prev_line,
+                    prev_start,
+                    first,
+                );
+                push_token(&mut data, dl, ds, keyword_len, 0);
+                prev_line = hit.range.start.line;
+                prev_start = hit.range.start.character;
+                first = false;
+            }
+            let name_len = hit
+                .name_range
+                .end
+                .character
+                .saturating_sub(hit.name_range.start.character);
+            if name_len > 0 {
+                let (dl, ds) = delta(
+                    hit.name_range.start.line,
+                    hit.name_range.start.character,
+                    prev_line,
+                    prev_start,
+                    first,
+                );
+                push_token(&mut data, dl, ds, name_len, 1);
+                prev_line = hit.name_range.start.line;
+                prev_start = hit.name_range.start.character;
+                first = false;
+            }
+        }
+        Some(SemanticTokens {
+            result_id: None,
+            data,
+        })
+    }
+
     pub fn rename(
         &self,
         path: &Path,
@@ -239,6 +290,32 @@ impl IndexState {
     }
 }
 
+fn delta(line: u32, start: u32, prev_line: u32, prev_start: u32, first: bool) -> (u32, u32) {
+    if first {
+        (line, start)
+    } else if line == prev_line {
+        (0, start.saturating_sub(prev_start))
+    } else {
+        (line.saturating_sub(prev_line), start)
+    }
+}
+
+fn push_token(
+    data: &mut Vec<tower_lsp::lsp_types::SemanticToken>,
+    delta_line: u32,
+    delta_start: u32,
+    length: u32,
+    token_type: u32,
+) {
+    data.push(tower_lsp::lsp_types::SemanticToken {
+        delta_line,
+        delta_start,
+        length,
+        token_type,
+        token_modifiers_bitset: 0,
+    });
+}
+
 /// Actor-owned index cache.
 #[derive(Debug)]
 pub struct AssumptionIndex {
@@ -294,6 +371,9 @@ pub enum IndexCall {
         position: Position,
         include_declaration: bool,
     },
+    SemanticTokens {
+        uri: Url,
+    },
     DocumentHighlight {
         uri: Url,
         position: Position,
@@ -312,6 +392,7 @@ pub enum IndexReply {
     Completion(Option<CompletionResponse>),
     Definition(Vec<Location>),
     References(Vec<Location>),
+    SemanticTokens(Option<SemanticTokens>),
     DocumentHighlight(Vec<DocumentHighlight>),
     Rename(Option<WorkspaceEdit>),
     Diagnostics(DiagnosticsMap),
@@ -398,6 +479,14 @@ impl Actor for AssumptionIndex {
                             .and_then(|p| state.references(&p, position, include_declaration))
                     });
                     let _ = reply_sender.send(IndexReply::References(locs.unwrap_or_default()));
+                }
+                IndexCall::SemanticTokens { uri } => {
+                    let tokens = self.state.as_ref().and_then(|state| {
+                        uri.to_file_path()
+                            .ok()
+                            .and_then(|p| state.semantic_tokens(&p))
+                    });
+                    let _ = reply_sender.send(IndexReply::SemanticTokens(tokens));
                 }
                 IndexCall::DocumentHighlight { uri, position } => {
                     let highlights = self.state.as_ref().and_then(|state| {

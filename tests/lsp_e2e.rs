@@ -177,6 +177,17 @@ async fn lsp_hover_rename_completion() -> Result<()> {
     request(
         &mut stdin,
         5,
+        "textDocument/semanticTokens/full",
+        json!({
+            "textDocument": {"uri": uri},
+        }),
+    )
+    .await?;
+    let semantic_tokens = timeout(Duration::from_secs(5), read_response(&mut stdout, 5)).await??;
+
+    request(
+        &mut stdin,
+        6,
         "textDocument/references",
         json!({
             "textDocument": {"uri": uri},
@@ -186,11 +197,11 @@ async fn lsp_hover_rename_completion() -> Result<()> {
     )
     .await?;
     let references_from_use =
-        timeout(Duration::from_secs(5), read_response(&mut stdout, 5)).await??;
+        timeout(Duration::from_secs(5), read_response(&mut stdout, 6)).await??;
 
     request(
         &mut stdin,
-        6,
+        7,
         "textDocument/references",
         json!({
             "textDocument": {"uri": assum_uri},
@@ -200,11 +211,11 @@ async fn lsp_hover_rename_completion() -> Result<()> {
     )
     .await?;
     let references_from_definition =
-        timeout(Duration::from_secs(5), read_response(&mut stdout, 6)).await??;
+        timeout(Duration::from_secs(5), read_response(&mut stdout, 7)).await??;
 
     request(
         &mut stdin,
-        7,
+        8,
         "textDocument/references",
         json!({
             "textDocument": {"uri": assum_uri},
@@ -214,11 +225,11 @@ async fn lsp_hover_rename_completion() -> Result<()> {
     )
     .await?;
     let references_web_only =
-        timeout(Duration::from_secs(5), read_response(&mut stdout, 7)).await??;
+        timeout(Duration::from_secs(5), read_response(&mut stdout, 8)).await??;
 
     request(
         &mut stdin,
-        8,
+        9,
         "textDocument/rename",
         json!({
             "textDocument": {"uri": uri},
@@ -227,16 +238,17 @@ async fn lsp_hover_rename_completion() -> Result<()> {
         }),
     )
     .await?;
-    let rename = timeout(Duration::from_secs(5), read_response(&mut stdout, 8)).await??;
+    let rename = timeout(Duration::from_secs(5), read_response(&mut stdout, 9)).await??;
 
-    request(&mut stdin, 9, "shutdown", json!({})).await?;
-    let _ = timeout(Duration::from_secs(5), read_response(&mut stdout, 9)).await??;
+    request(&mut stdin, 10, "shutdown", json!({})).await?;
+    let _ = timeout(Duration::from_secs(5), read_response(&mut stdout, 10)).await??;
     notify(&mut stdin, "exit", json!({})).await?;
 
     let snapshot = json!({
         "hover": hover.get("result"),
         "completion_labels": labels,
         "highlights": sanitize_paths(highlights.get("result").cloned().unwrap_or(Value::Null), &root_uri),
+        "semantic_tokens": semantic_tokens.get("result"),
         "references_from_use": sort_locations_value(sanitize_paths(
             references_from_use.get("result").cloned().unwrap_or(Value::Null),
             &root_uri,

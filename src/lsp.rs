@@ -123,6 +123,17 @@ impl Backend {
             references_provider: Some(OneOf::Left(true)),
             rename_provider: Some(OneOf::Left(true)),
             document_highlight_provider: Some(OneOf::Left(true)),
+            semantic_tokens_provider: Some(
+                SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
+                    work_done_progress_options: Default::default(),
+                    legend: SemanticTokensLegend {
+                        token_types: vec![SemanticTokenType::MACRO, SemanticTokenType::VARIABLE],
+                        token_modifiers: Vec::new(),
+                    },
+                    range: None,
+                    full: Some(SemanticTokensFullOptions::Bool(true)),
+                }),
+            ),
             ..ServerCapabilities::default()
         }
     }
@@ -264,6 +275,23 @@ impl LanguageServer for Backend {
             } else {
                 Ok(Some(highlights))
             }
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> RpcResult<Option<SemanticTokensResult>> {
+        let uri = params.text_document.uri;
+        let reply = self
+            .index
+            .call(IndexCall::SemanticTokens { uri })
+            .await
+            .map_err(Self::internal_error)?;
+        if let IndexReply::SemanticTokens(tokens) = reply {
+            Ok(tokens.map(SemanticTokensResult::Tokens))
         } else {
             Ok(None)
         }
