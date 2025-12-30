@@ -1,0 +1,8 @@
+---
+source: tests/check_cli.rs
+assertion_line: 63
+expression: body
+---
+status: Some(1)
+stdout:
+stderr:

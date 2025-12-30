@@ -1,0 +1,12 @@
+- [src/lib.rs](src/lib.rs): module wiring and public exports for LSP and lint entrypoints.
+- [src/model.rs](src/model.rs): core data structs for assumption docs, tag hits, and diagnostics.
+- [src/parser.rs](src/parser.rs): parses ASSUM.md headings, scans @ASSUME tags, resolves scopes, and file ignores.
+- [src/index.rs](src/index.rs): builds scoped index, sorts completions, computes diagnostics, and serves hover/completion/rename via actor.
+- [src/lsp.rs](src/lsp.rs): LSP server backend, manages overlays, publishes diagnostics, stdio runner.
+- [src/lint.rs](src/lint.rs): static lint entry that reuses the index diagnostics and prints CLI findings using workspace-relative paths when possible.
+- [src/main.rs](src/main.rs): CLI mode switch (LSP vs lint) and tracing setup.
+- [tests/check_cli.rs](tests/check_cli.rs): CLI snapshots covering valid multi-language nested workspace, failure with missing definitions and unused roots, and tool-missing PATH handling.
+- [tests/lsp_e2e.rs](tests/lsp_e2e.rs): LSP hover/completion/rename snapshot over nested web/app.js, with path sanitization and deterministic ordering.
+- [test_data/cli_valid](test_data/cli_valid): multi-language nested workspace (Rust, JS, TS, Python) with overlapping shared_name scopes and multi-paragraph definitions; all assumption references live in comments and expect no diagnostics.
+- [test_data/cli_invalid](test_data/cli_invalid): nested workspace with missing assumptions across scopes plus unused root definition; references are in comments to avoid syntax errors while still producing warnings/errors.
+- [test_data/lsp_ws](test_data/lsp_ws): LSP fixture mirroring multi-scope setup for hover/completion/rename coverage; assumption tags live in comments.

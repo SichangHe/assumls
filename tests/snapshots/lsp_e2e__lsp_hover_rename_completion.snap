@@ -1,0 +1,61 @@
+---
+source: tests/lsp_e2e.rs
+assertion_line: 169
+expression: snapshot
+---
+{
+  "completion_labels": [
+    "shared_name",
+    "web_only"
+  ],
+  "hover": {
+    "contents": {
+      "kind": "markdown",
+      "value": "## shared_name\nWeb-specific shared_name description.\n\nAdditional paragraph describing UI constraints.\n"
+    },
+    "range": {
+      "end": {
+        "character": 19,
+        "line": 0
+      },
+      "start": {
+        "character": 8,
+        "line": 0
+      }
+    }
+  },
+  "rename": {
+    "changes": {
+      "<ROOT>/web/ASSUM.md": [
+        {
+          "newText": "shared_web",
+          "range": {
+            "end": {
+              "character": 13,
+              "line": 0
+            },
+            "start": {
+              "character": 2,
+              "line": 0
+            }
+          }
+        }
+      ],
+      "<ROOT>/web/app.js": [
+        {
+          "newText": "shared_web",
+          "range": {
+            "end": {
+              "character": 19,
+              "line": 0
+            },
+            "start": {
+              "character": 8,
+              "line": 0
+            }
+          }
+        }
+      ]
+    }
+  }
+}
