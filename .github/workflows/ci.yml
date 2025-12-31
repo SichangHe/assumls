@@ -15,7 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install fd and rg
-        run: sudo apt-get install -y ripgrep fd-find
+        run: |
+          set -eux -o pipefail
+          sudo apt-get install -y ripgrep fd-find
+          sudo ln -sf $(which fdfind) /usr/local/bin/fd
+          which fd
+          which rg
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
