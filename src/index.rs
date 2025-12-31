@@ -128,7 +128,7 @@ impl IndexState {
                 kind: Some(CompletionItemKind::VARIABLE),
                 text_edit: replace_range.as_ref().map(|range| {
                     CompletionTextEdit::Edit(TextEdit {
-                        range: range.clone(),
+                        range: *range,
                         new_text: doc.name.clone(),
                     })
                 }),
