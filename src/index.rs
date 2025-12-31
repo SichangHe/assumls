@@ -123,9 +123,9 @@ impl IndexState {
                 detail: Some(doc.heading.clone()),
                 documentation: Some(Documentation::MarkupContent(MarkupContent {
                     kind: MarkupKind::Markdown,
-                    value: format!("## {}\n{}", doc.heading, doc.body),
+                    value: doc.body.clone(),
                 })),
-                kind: Some(CompletionItemKind::TEXT),
+                kind: Some(CompletionItemKind::VARIABLE),
                 text_edit: replace_range.as_ref().map(|range| {
                     CompletionTextEdit::Edit(TextEdit {
                         range: range.clone(),
