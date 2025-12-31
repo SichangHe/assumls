@@ -91,12 +91,21 @@ impl Backend {
         self.refresh_with(IndexCall::Initialize { root }).await
     }
 
-    async fn apply_overlay(&self, uri: &Url, text: String) -> RpcResult<DiagnosticsMap> {
+    async fn apply_overlay(
+        &self,
+        uri: &Url,
+        text: String,
+        version: Option<i32>,
+    ) -> RpcResult<DiagnosticsMap> {
         let Some(path) = uri.to_file_path().ok() else {
             return Ok(HashMap::new());
         };
-        self.refresh_with(IndexCall::ApplyOverlay { path, text })
-            .await
+        self.refresh_with(IndexCall::ApplyOverlay {
+            path,
+            text,
+            version,
+        })
+        .await
     }
 
     async fn drop_overlay(&self, uri: &Url) -> RpcResult<DiagnosticsMap> {
@@ -339,8 +348,15 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let Some(_path) = params.text_document.uri.to_file_path().ok() else {
+            return;
+        };
         match self
-            .apply_overlay(&params.text_document.uri, params.text_document.text)
+            .apply_overlay(
+                &params.text_document.uri,
+                params.text_document.text,
+                Some(params.text_document.version),
+            )
             .await
         {
             Ok(diags) => self.diagnostics.send(diags),
@@ -350,8 +366,15 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.into_iter().last() {
+            let Some(_path) = params.text_document.uri.to_file_path().ok() else {
+                return;
+            };
             match self
-                .apply_overlay(&params.text_document.uri, change.text)
+                .apply_overlay(
+                    &params.text_document.uri,
+                    change.text,
+                    Some(params.text_document.version),
+                )
                 .await
             {
                 Ok(diags) => self.diagnostics.send(diags),

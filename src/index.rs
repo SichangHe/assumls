@@ -370,6 +370,7 @@ fn push_token(
 pub struct AssumptionIndex {
     root: Option<PathBuf>,
     overlays: HashMap<PathBuf, String>,
+    versions: HashMap<PathBuf, i32>,
     state: Option<IndexState>,
 }
 
@@ -378,6 +379,7 @@ impl AssumptionIndex {
         Self {
             root: None,
             overlays: HashMap::new(),
+            versions: HashMap::new(),
             state: None,
         }
     }
@@ -425,6 +427,7 @@ pub enum IndexCall {
     ApplyOverlay {
         path: PathBuf,
         text: String,
+        version: Option<i32>,
     },
     /// Drop overlay for a file.
     DropOverlay {
@@ -509,13 +512,38 @@ impl Actor for AssumptionIndex {
                     let diags = self.refresh().await;
                     let _ = reply_sender.send(IndexReply::Refreshed(diags));
                 }
-                IndexCall::ApplyOverlay { path, text } => {
-                    self.overlays.insert(normalize_path(path), text);
-                    let diags = self.refresh().await;
+                IndexCall::ApplyOverlay {
+                    path,
+                    text,
+                    version,
+                } => {
+                    let path = normalize_path(path);
+                    let stale = match version {
+                        Some(v) => match self.versions.get(&path).copied() {
+                            Some(prev) if v <= prev => true,
+                            _ => {
+                                self.versions.insert(path.clone(), v);
+                                false
+                            }
+                        },
+                        None => false,
+                    };
+                    let diags = if stale {
+                        info!(path = %path.display(), version, prev_version = self.versions.get(&path), "dropping out-of-order overlay");
+                        self.state
+                            .as_ref()
+                            .map(|s| s.diagnostics())
+                            .unwrap_or_default()
+                    } else {
+                        self.overlays.insert(path, text);
+                        self.refresh().await
+                    };
                     let _ = reply_sender.send(IndexReply::Refreshed(diags));
                 }
                 IndexCall::DropOverlay { path } => {
-                    self.overlays.remove(&normalize_path(path));
+                    let path = normalize_path(path);
+                    self.overlays.remove(&path);
+                    self.versions.remove(&path);
                     let diags = self.refresh().await;
                     let _ = reply_sender.send(IndexReply::Refreshed(diags));
                 }
