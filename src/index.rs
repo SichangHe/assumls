@@ -11,7 +11,7 @@ use tower_lsp::lsp_types::{
     DocumentHighlightKind, Documentation, Hover, HoverContents, Location, MarkupContent,
     MarkupKind, Position, Range, SemanticTokens, TextEdit, Url, WorkspaceEdit,
 };
-use tracing::error;
+use tracing::{error, info};
 
 use crate::model::{AssumptionDiagnostic, AssumptionDoc, DiagSeverity, TagHit};
 use crate::parser::{
@@ -389,7 +389,13 @@ impl AssumptionIndex {
         let line = text.lines().nth(line_idx)?;
         let prefix: String = line.chars().take(char_idx).collect();
         let marker = "@ASSUME:";
-        let idx = prefix.rfind(marker)?;
+        let idx = match prefix.rfind(marker) {
+            Some(i) => i,
+            None => {
+                info!(path = %path.display(), line = line_idx, character = char_idx, "completion_ctx missing marker");
+                return None;
+            }
+        };
         let start_char = u32::try_from(idx + marker.len()).ok()?;
         Some((
             Range {
@@ -526,12 +532,34 @@ impl Actor for AssumptionIndex {
                     let _ = reply_sender.send(IndexReply::Hover(hover));
                 }
                 IndexCall::Completion { uri, position } => {
+                    let mut path_str = String::new();
+                    let mut ctx_found = false;
+                    let has_state = self.state.is_some();
                     let items = self.state.as_ref().and_then(|state| {
                         uri.to_file_path().ok().and_then(|p| {
+                            path_str = p.display().to_string();
                             let ctx = self.completion_ctx(&p, position);
+                            ctx_found = ctx.is_some();
                             state.completion(&p, ctx)
                         })
                     });
+                    let count = items
+                        .as_ref()
+                        .map(|r| match r {
+                            CompletionResponse::Array(v) => v.len(),
+                            _ => 0,
+                        })
+                        .unwrap_or(0);
+                    info!(
+                        uri = %uri,
+                        path = %path_str,
+                        line = position.line,
+                        character = position.character,
+                        has_state,
+                        ctx_found,
+                        items = count,
+                        "completion handled"
+                    );
                     let _ = reply_sender.send(IndexReply::Completion(items));
                 }
                 IndexCall::Definition { uri, position } => {

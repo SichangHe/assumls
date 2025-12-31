@@ -8,7 +8,7 @@ use tokio_gen_server::actor::ActorExt;
 use tower_lsp::jsonrpc;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server, async_trait};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::index::{AssumptionIndex, AssumptionIndexRef, DiagnosticsMap, IndexCall, IndexReply};
 use crate::model::{AssumptionDiagnostic, DiagSeverity};
@@ -201,12 +201,26 @@ impl LanguageServer for Backend {
     async fn completion(&self, params: CompletionParams) -> RpcResult<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
+        info!(uri = %uri, line = position.line, character = position.character, "completion request");
         let reply = self
             .index
             .call(IndexCall::Completion { uri, position })
             .await
             .map_err(Self::internal_error)?;
         if let IndexReply::Completion(items) = reply {
+            let count = items
+                .as_ref()
+                .map(|r| match r {
+                    CompletionResponse::Array(v) => v.len(),
+                    _ => 0,
+                })
+                .unwrap_or(0);
+            info!(
+                line = position.line,
+                character = position.character,
+                items = count,
+                "completion response"
+            );
             Ok(items)
         } else {
             Ok(None)

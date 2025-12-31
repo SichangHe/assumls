@@ -1,8 +1,9 @@
+use std::io::stderr;
 use std::path::PathBuf;
 
 use assumls::{run_lint, run_stdio};
 use clap::{ArgAction, Parser, Subcommand};
-use tracing::error;
+use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Parser)]
@@ -47,7 +48,15 @@ fn init_tracing(verbose: u8) {
         };
         EnvFilter::new(level)
     });
-    let _ = fmt().with_env_filter(filter).try_init();
+    match fmt()
+        .with_env_filter(filter.clone())
+        .with_ansi(false)
+        .with_writer(stderr)
+        .try_init()
+    {
+        Ok(_) => info!(filter = %filter, verbose, "tracing initialized"),
+        Err(err) => eprintln!("assumls tracing init failed ({filter}): {err}"),
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
