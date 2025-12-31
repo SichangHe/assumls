@@ -50,7 +50,7 @@ fn init_tracing(verbose: u8) {
     let _ = fmt().with_env_filter(filter).try_init();
 }
 
-#[tokio::main(flavor = "multi_thread")]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let cli = Cli::parse();
     init_tracing(cli.verbose);

@@ -200,9 +200,10 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, params: CompletionParams) -> RpcResult<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
         let reply = self
             .index
-            .call(IndexCall::Completion { uri })
+            .call(IndexCall::Completion { uri, position })
             .await
             .map_err(Self::internal_error)?;
         if let IndexReply::Completion(items) = reply {

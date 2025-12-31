@@ -5,7 +5,6 @@ expression: snapshot
 ---
 {
   "completion_labels": [
-    "ASSUME:",
     "shared_name",
     "web_only"
   ],

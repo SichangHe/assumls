@@ -144,7 +144,7 @@ async fn lsp_hover_rename_completion() -> Result<()> {
         "textDocument/completion",
         json!({
             "textDocument": {"uri": uri},
-            "position": {"line": 0, "character": 0},
+            "position": {"line": 0, "character": 11},
         }),
     )
     .await?;

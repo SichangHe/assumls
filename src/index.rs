@@ -7,7 +7,7 @@ use serde::Deserialize;
 use tokio::task::spawn_blocking;
 use tokio_gen_server::actor::{Actor, ActorEnv, ActorRef};
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionResponse, DocumentHighlight,
+    CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit, DocumentHighlight,
     DocumentHighlightKind, Documentation, Hover, HoverContents, Location, MarkupContent,
     MarkupKind, Position, Range, SemanticTokens, TextEdit, Url, WorkspaceEdit,
 };
@@ -38,12 +38,22 @@ pub struct IndexState {
     tags: HashMap<PathBuf, Vec<TagHit>>,
     /// Diagnostics per file.
     diagnostics: DiagnosticsMap,
+    /// Scope roots containing ASSUM.md files.
+    scope_roots: HashSet<PathBuf>,
 }
 
 impl IndexState {
+    fn scope_for(&self, path: &Path) -> Option<PathBuf> {
+        let norm = normalize_path(path.to_path_buf());
+        self.file_scope
+            .get(&norm)
+            .cloned()
+            .or_else(|| find_scope(&self.scope_roots, &norm))
+    }
+
     fn docs_for_path(&self, path: &Path) -> Option<&HashMap<String, AssumptionDoc>> {
-        let scope = self.file_scope.get(&normalize_path(path.to_path_buf()))?;
-        self.scope_docs.get(scope)
+        let scope = self.scope_for(path)?;
+        self.scope_docs.get(&scope)
     }
 
     fn tag_at(&self, path: &Path, position: Position) -> Option<TagHit> {
@@ -67,16 +77,46 @@ impl IndexState {
         })
     }
 
-    pub fn completion(&self, path: &Path) -> Option<CompletionResponse> {
-        let mut items: Vec<CompletionItem> = vec![CompletionItem {
-            label: "ASSUME:".into(),
-            insert_text: Some("ASSUME:".into()),
-            detail: Some("Insert @ASSUME prefix.".into()),
-            kind: Some(CompletionItemKind::KEYWORD),
-            ..CompletionItem::default()
-        }];
-        if let Some(docs) = self.docs_for_path(path) {
-            items.extend(docs.values().map(|doc| CompletionItem {
+    pub fn completion(
+        &self,
+        path: &Path,
+        ctx: Option<(Range, String)>,
+    ) -> Option<CompletionResponse> {
+        let mut typed = String::new();
+        let mut replace_range = None;
+        let include_prefix = ctx.is_none();
+        if let Some((range, name)) = ctx {
+            typed = name;
+            replace_range = Some(range);
+        }
+
+        let mut items: Vec<CompletionItem> = if include_prefix {
+            vec![CompletionItem {
+                label: "ASSUME:".into(),
+                insert_text: Some("ASSUME:".into()),
+                detail: Some("Insert @ASSUME prefix.".into()),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..CompletionItem::default()
+            }]
+        } else {
+            Vec::new()
+        };
+
+        let mut seen = HashSet::new();
+        let docs: Vec<&AssumptionDoc> = if let Some(docs) = self.docs_for_path(path) {
+            docs.values().collect()
+        } else {
+            self.scope_docs.values().flat_map(|m| m.values()).collect()
+        };
+
+        items.extend(docs.into_iter().filter_map(|doc| {
+            if !typed.is_empty() && !doc.name.starts_with(&typed) {
+                return None;
+            }
+            if !seen.insert(doc.name.clone()) {
+                return None;
+            }
+            Some(CompletionItem {
                 label: doc.name.clone(),
                 insert_text: Some(doc.name.clone()),
                 filter_text: Some(format!("@ASSUME:{}", doc.name)),
@@ -86,8 +126,17 @@ impl IndexState {
                     value: format!("## {}\n{}", doc.heading, doc.body),
                 })),
                 kind: Some(CompletionItemKind::TEXT),
+                text_edit: replace_range.as_ref().map(|range| {
+                    CompletionTextEdit::Edit(TextEdit {
+                        range: range.clone(),
+                        new_text: doc.name.clone(),
+                    })
+                }),
                 ..CompletionItem::default()
-            }));
+            })
+        }));
+        if items.is_empty() {
+            return None;
         }
         items.sort_by(|a, b| a.label.cmp(&b.label));
         Some(CompletionResponse::Array(items))
@@ -112,7 +161,7 @@ impl IndexState {
         include_declaration: bool,
     ) -> Option<Vec<Location>> {
         let tag = self.tag_at(path, position)?;
-        let scope = self.file_scope.get(&normalize_path(path.to_path_buf()))?;
+        let scope = self.scope_for(path)?;
         let decl = self
             .docs_for_path(path)
             .and_then(|docs| docs.get(&tag.name))
@@ -132,7 +181,7 @@ impl IndexState {
         for (p, hits) in self
             .tags
             .iter()
-            .filter(|(p, _)| self.file_scope.get(*p) == Some(scope))
+            .filter(|(p, _)| self.scope_for(p).as_ref() == Some(&scope))
         {
             let norm_path = normalize_path(p.clone());
             let Ok(uri) = Url::from_file_path(&norm_path) else {
@@ -228,7 +277,7 @@ impl IndexState {
         new_name: String,
     ) -> Option<WorkspaceEdit> {
         let tag = self.tag_at(path, position)?;
-        let scope = self.file_scope.get(&normalize_path(path.to_path_buf()))?;
+        let scope = self.scope_for(path)?;
         let decl = self
             .docs_for_path(path)
             .and_then(|docs| docs.get(&tag.name))
@@ -246,7 +295,7 @@ impl IndexState {
         for (p, hits) in self
             .tags
             .iter()
-            .filter(|(p, _)| self.file_scope.get(*p) == Some(scope))
+            .filter(|(p, _)| self.scope_for(p).as_ref() == Some(&scope))
         {
             let norm_path = normalize_path(p.clone());
             let Some(url) = Url::from_file_path(&norm_path).ok() else {
@@ -332,6 +381,27 @@ impl AssumptionIndex {
             state: None,
         }
     }
+
+    fn completion_ctx(&self, path: &Path, position: Position) -> Option<(Range, String)> {
+        let text = content_for(path, &self.overlays).ok()??;
+        let line_idx = usize::try_from(position.line).ok()?;
+        let char_idx = usize::try_from(position.character).ok()?;
+        let line = text.lines().nth(line_idx)?;
+        let prefix: String = line.chars().take(char_idx).collect();
+        let marker = "@ASSUME:";
+        let idx = prefix.rfind(marker)?;
+        let start_char = u32::try_from(idx + marker.len()).ok()?;
+        Some((
+            Range {
+                start: Position {
+                    line: position.line,
+                    character: start_char,
+                },
+                end: position,
+            },
+            prefix[idx + marker.len()..].to_string(),
+        ))
+    }
 }
 
 impl Default for AssumptionIndex {
@@ -361,6 +431,7 @@ pub enum IndexCall {
     },
     Completion {
         uri: Url,
+        position: Position,
     },
     Definition {
         uri: Url,
@@ -454,9 +525,12 @@ impl Actor for AssumptionIndex {
                     });
                     let _ = reply_sender.send(IndexReply::Hover(hover));
                 }
-                IndexCall::Completion { uri } => {
+                IndexCall::Completion { uri, position } => {
                     let items = self.state.as_ref().and_then(|state| {
-                        uri.to_file_path().ok().and_then(|p| state.completion(&p))
+                        uri.to_file_path().ok().and_then(|p| {
+                            let ctx = self.completion_ctx(&p, position);
+                            state.completion(&p, ctx)
+                        })
                     });
                     let _ = reply_sender.send(IndexReply::Completion(items));
                 }
@@ -590,6 +664,7 @@ fn collect_index(root: PathBuf, overlays: HashMap<PathBuf, String>) -> Result<In
     for (path, hits) in tag_hits {
         state.tags.entry(path).or_default().extend(hits);
     }
+    state.scope_roots = scope_roots;
     state.diagnostics = compute_diagnostics(&state);
     Ok(state)
 }
@@ -628,7 +703,7 @@ fn compute_diagnostics(state: &IndexState) -> DiagnosticsMap {
         for (_path, hits) in state
             .tags
             .iter()
-            .filter(|(p, _)| state.file_scope.get(*p) == Some(scope))
+            .filter(|(p, _)| state.scope_for(p).as_ref() == Some(scope))
         {
             for hit in hits {
                 if let Some(doc) = docs.get(&hit.name) {
