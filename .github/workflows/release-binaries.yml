@@ -1,8 +1,12 @@
 name: build-and-upload-binaries
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -24,9 +28,9 @@ jobs:
           - target: aarch64-unknown-linux-musl
             os: ubuntu-22.04
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
           - target: aarch64-apple-darwin
-            os: macos-13
+            os: macos-latest
           - target: x86_64-pc-windows-msvc
             os: windows-2022
           - target: aarch64-pc-windows-msvc
