@@ -70,3 +70,7 @@ assumls lsp             # Start LSP server
 ## Examples
 
 See `src/` (this project itself) and test directories under `test_data/`.
+
+## License
+
+MIT or Apache-2.0, per `Cargo.toml`.

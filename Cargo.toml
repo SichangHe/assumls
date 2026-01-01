@@ -2,6 +2,12 @@
 name = "assumls"
 version = "0.0.0"
 edition = "2024"
+description = "Language server and CLI checker for enforcing documented assumptions across a codebase"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/SichangHe/assumls"
+keywords = ["lsp", "language-server", "assumptions", "documentation", "linter"]
+categories = ["development-tools", "command-line-utilities"]
+readme = "README.md"
 
 [dependencies]
 tokio = { version = "1.48.0", features = ["macros", "rt", "io-std"] }
