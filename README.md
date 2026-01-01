@@ -58,6 +58,16 @@ assumls check <path>    # Exit 0 if clean, 1 if errors
 assumls lsp             # Start LSP server
 ```
 
+## Installation
+
+```sh
+cargo install assumls
+# Or, if you have cargo-binstall:
+cargo binstall assumls
+```
+
+Or, grab one from [Releases](https://github.com/SichangHe/assumls/releases).
+
 ## Development
 
 > [!NOTE]\
