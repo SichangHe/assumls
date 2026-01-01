@@ -33,14 +33,15 @@ pub fn parse_assumptions_content(content: &str, path: &Path) -> Result<Vec<Assum
                 current = None;
                 continue;
             }
+            // @ASSUME:definition_range_excludes_prefix
             let range = Range {
                 start: Position {
-                    line: idx as u32,
+                    line: idx.try_into().unwrap(),
                     character: 2,
                 },
                 end: Position {
-                    line: idx as u32,
-                    character: (2 + name.len()) as u32,
+                    line: idx.try_into().unwrap(),
+                    character: (2 + name.len()).try_into().unwrap(),
                 },
             };
             current = Some((name, range, Vec::new()));
@@ -92,24 +93,26 @@ pub fn scan_tags_content(content: &str) -> Vec<TagHit> {
                 continue;
             }
             let end_char = name_start + name.len();
+
+            // @ASSUME:utf16_positions
             let range = Range {
                 start: Position {
-                    line: line_idx as u32,
-                    character: start as u32,
+                    line: line_idx.try_into().unwrap(),
+                    character: byte_offset_to_utf16(line, start),
                 },
                 end: Position {
-                    line: line_idx as u32,
-                    character: end_char as u32,
+                    line: line_idx.try_into().unwrap(),
+                    character: byte_offset_to_utf16(line, end_char),
                 },
             };
             let name_range = Range {
                 start: Position {
-                    line: line_idx as u32,
-                    character: name_start as u32,
+                    line: line_idx.try_into().unwrap(),
+                    character: byte_offset_to_utf16(line, name_start),
                 },
                 end: Position {
-                    line: line_idx as u32,
-                    character: end_char as u32,
+                    line: line_idx.try_into().unwrap(),
+                    character: byte_offset_to_utf16(line, end_char),
                 },
             };
             let name_len = name.len();
@@ -140,6 +143,7 @@ pub fn content_for(
 }
 
 /// Locate the nearest directory that contains an ASSUM.md root.
+/// @ASSUME:scope_resolution_nearest_parent
 pub fn find_scope(scope_roots: &HashSet<PathBuf>, path: &Path) -> Option<PathBuf> {
     let mut current = path.parent();
     while let Some(dir) = current {
@@ -176,6 +180,18 @@ fn is_assumption_char(c: char) -> bool {
     c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'
 }
 
+/// @ASSUME:utf16_positions
+fn byte_offset_to_utf16(s: &str, byte_offset: usize) -> u32 {
+    let substr = &s[..byte_offset.min(s.len())];
+    // @ASSUME:position_overflow_safety
+    substr
+        .chars()
+        .map(|c| c.len_utf16())
+        .sum::<usize>()
+        .try_into()
+        .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,15 +218,16 @@ mod tests {
 
     #[test]
     fn scans_tags_with_name_only_range() {
-        let hits = scan_tags_content("a @ASSUME:foo_bar rest");
+        // Use actual assumption from src/ASSUM.md to avoid check errors
+        let hits = scan_tags_content("a @ASSUME:utf16_positions rest");
         assert_eq!(hits.len(), 1);
         let hit = &hits[0];
-        assert_eq!(hit.name, "foo_bar");
+        assert_eq!(hit.name, "utf16_positions");
         assert_eq!(hit.range.start.line, 0);
         assert_eq!(hit.range.start.character, 2);
-        assert_eq!(hit.range.end.character, 17);
+        assert_eq!(hit.range.end.character, 25);
         assert_eq!(hit.name_range.start.character, 10);
-        assert_eq!(hit.name_range.end.character, 17);
+        assert_eq!(hit.name_range.end.character, 25);
     }
 
     #[test]

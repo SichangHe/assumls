@@ -877,8 +877,11 @@ fn tags_from_rg(
         .current_dir(root)
         .output()
         .with_context(|| format!("running rg in {}", root.display()))?;
-    if !output.status.success() {
-        anyhow::bail!("rg failed with status {}", output.status);
+    // @ASSUME:rg_exit_code_one
+    match output.status.code() {
+        Some(0) | Some(1) => {}
+        Some(code) => anyhow::bail!("rg failed with exit code {}", code),
+        None => anyhow::bail!("rg terminated by signal"),
     }
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let Ok(msg) = serde_json::from_str::<RgMessage>(line) else {
@@ -905,7 +908,7 @@ fn tags_from_rg(
         let adjusted: Vec<TagHit> = line_hits
             .into_iter()
             .map(|mut hit| {
-                let base = data.line_number.saturating_sub(1) as u32;
+                let base: u32 = data.line_number.saturating_sub(1).try_into().unwrap();
                 hit.range.start.line += base;
                 hit.range.end.line += base;
                 hit.name_range.start.line += base;

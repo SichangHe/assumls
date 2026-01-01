@@ -13,3 +13,10 @@ repos:
         entry: cargo fmt --all --check
         language: system
         pass_filenames: false
+
+      - id: assumls-check
+        name: assumls check
+        entry: cargo run --quiet -- check src
+        language: system
+        pass_filenames: false
+        always_run: true
