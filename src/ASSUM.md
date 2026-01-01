@@ -14,3 +14,8 @@ Use `try_into().unwrap()` not `as u32` - explicit panic w/ trace vs silent trunc
 
 # scope_resolution_nearest_parent
 Files use nearest parent ASSUM.md. No inheritance - scopes are independent.
+
+# incremental_indexing
+Overlay updates only reparse changed file, not full workspace.
+
+ASSUM.md → update definitions for that scope. Non-ASSUM.md → update tags only.

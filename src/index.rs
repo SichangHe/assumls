@@ -383,7 +383,50 @@ impl AssumptionIndex {
             state: None,
         }
     }
-
+    // @ASSUME:incremental_indexing
+    async fn incremental_refresh(&mut self, changed_path: &Path) -> DiagnosticsMap {
+        let Some(ref mut state) = self.state else {
+            return self.refresh().await;
+        };
+        let changed_path = normalize_path(changed_path.to_path_buf());
+        // Check if it's an ASSUM.md file
+        if changed_path.file_name().and_then(|n| n.to_str()) == Some("ASSUM.md") {
+            // Incrementally update definitions for this scope
+            let content = if let Some(overlay) = self.overlays.get(&changed_path) {
+                overlay.clone()
+            } else {
+                std::fs::read_to_string(&changed_path)
+                    .ok()
+                    .unwrap_or_default()
+            };
+            if let Ok(docs_vec) = parse_assumptions_content(&content, &changed_path) {
+                let scope = changed_path
+                    .parent()
+                    .map(|p| normalize_path(p.to_path_buf()));
+                if let Some(scope) = scope {
+                    let docs_map: HashMap<String, AssumptionDoc> = docs_vec
+                        .into_iter()
+                        .map(|doc| (doc.name.clone(), doc))
+                        .collect();
+                    state.scope_docs.insert(scope, docs_map);
+                }
+            }
+        } else {
+            // Update tags for regular source file
+            let content = if let Some(overlay) = self.overlays.get(&changed_path) {
+                Some(overlay.clone())
+            } else {
+                std::fs::read_to_string(&changed_path).ok()
+            };
+            if let Some(content) = content {
+                let tags = scan_tags_content(&content);
+                state.tags.insert(changed_path.clone(), tags);
+            } else {
+                state.tags.remove(&changed_path);
+            }
+        }
+        state.diagnostics()
+    }
     fn completion_ctx(&self, path: &Path, position: Position) -> Option<(Range, String)> {
         let text = content_for(path, &self.overlays).ok()??;
         let line_idx = usize::try_from(position.line).ok()?;
@@ -535,8 +578,9 @@ impl Actor for AssumptionIndex {
                             .map(|s| s.diagnostics())
                             .unwrap_or_default()
                     } else {
-                        self.overlays.insert(path, text);
-                        self.refresh().await
+                        self.overlays.insert(path.clone(), text);
+                        // @ASSUME:incremental_indexing
+                        self.incremental_refresh(&path).await
                     };
                     let _ = reply_sender.send(IndexReply::Refreshed(diags));
                 }
