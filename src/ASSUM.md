@@ -19,3 +19,13 @@ Files use nearest parent ASSUM.md. No inheritance - scopes are independent.
 Overlay updates only reparse changed file, not full workspace.
 
 ASSUM.md → update definitions for that scope. Non-ASSUM.md → update tags only.
+
+# unwrap_or_default_on_reply
+LSP replies use `unwrap_or_default()` when state unavailable - returns empty results vs error.
+
+Graceful degradation: client gets empty hovers/completions if index not ready.
+
+# overlay_version_ordering
+Drop out-of-order overlays by version number to handle async LSP protocol race conditions.
+
+Editor may send v2 before v1 arrives. Keep highest version seen per file.

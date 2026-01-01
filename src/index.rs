@@ -561,6 +561,7 @@ impl Actor for AssumptionIndex {
                     version,
                 } => {
                     let path = normalize_path(path);
+                    // @ASSUME:overlay_version_ordering
                     let stale = match version {
                         Some(v) => match self.versions.get(&path).copied() {
                             Some(prev) if v <= prev => true,
@@ -573,6 +574,7 @@ impl Actor for AssumptionIndex {
                     };
                     let diags = if stale {
                         info!(path = %path.display(), version, prev_version = self.versions.get(&path), "dropping out-of-order overlay");
+                        // @ASSUME:unwrap_or_default_on_reply
                         self.state
                             .as_ref()
                             .map(|s| s.diagnostics())
@@ -640,6 +642,7 @@ impl Actor for AssumptionIndex {
                             .ok()
                             .and_then(|p| state.definition(&p, position))
                     });
+                    // @ASSUME:unwrap_or_default_on_reply
                     let _ = reply_sender.send(IndexReply::Definition(locs.unwrap_or_default()));
                 }
                 IndexCall::References {
@@ -652,6 +655,7 @@ impl Actor for AssumptionIndex {
                             .ok()
                             .and_then(|p| state.references(&p, position, include_declaration))
                     });
+                    // @ASSUME:unwrap_or_default_on_reply
                     let _ = reply_sender.send(IndexReply::References(locs.unwrap_or_default()));
                 }
                 IndexCall::SemanticTokens { uri } => {

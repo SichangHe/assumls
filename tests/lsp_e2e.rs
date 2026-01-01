@@ -76,6 +76,7 @@ async fn lsp_hover_rename_completion() -> Result<()> {
     let assum_text = std::fs::read_to_string(&assum)?;
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("assumls"));
+    cmd.arg("lsp");
     cmd.kill_on_drop(true);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());

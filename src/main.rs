@@ -24,12 +24,12 @@ struct Cli {
     )]
     root: Option<PathBuf>,
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the language server (default).
+    /// Run the language server.
     Lsp,
     /// Run a one-off static check.
     Check {
@@ -64,7 +64,7 @@ async fn main() {
     let cli = Cli::parse();
     init_tracing(cli.verbose);
     let root_override = cli.root;
-    match cli.command.unwrap_or(Command::Lsp) {
+    match cli.command {
         Command::Lsp => {
             if let Err(err) = run_stdio(root_override.clone()).await {
                 error!(error = %err, "AssumLS LSP failed");
