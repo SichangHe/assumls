@@ -1,10 +1,12 @@
 ---
 source: tests/lsp_e2e.rs
-assertion_line: 266
+assertion_line: 267
 expression: snapshot
 ---
 {
   "completion_labels": [
+    "core_shared",
+    "infra_base",
     "shared_name",
     "web_only"
   ],

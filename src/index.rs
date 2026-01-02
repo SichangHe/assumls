@@ -15,7 +15,7 @@ use tracing::{error, info};
 
 use crate::model::{AssumptionDiagnostic, AssumptionDoc, DiagSeverity, TagHit};
 use crate::parser::{
-    contains, content_for, find_scope, parse_assumptions_content, scan_tags_content,
+    collect_ancestor_scopes, contains, content_for, parse_assumptions_content, scan_tags_content,
 };
 
 pub type DiagnosticsMap = HashMap<PathBuf, Vec<AssumptionDiagnostic>>;
@@ -43,12 +43,27 @@ pub struct IndexState {
 }
 
 impl IndexState {
+    /// Resolve an assumption name with scope inheritance.
+    /// Child scopes inherit from parents, nearest definition wins (shadowing).
+    pub fn resolve_assumption(&self, path: &Path, name: &str) -> Option<&AssumptionDoc> {
+        let norm = normalize_path(path.to_path_buf());
+        let scopes = collect_ancestor_scopes(&self.scope_roots, &norm);
+        for scope in scopes {
+            if let Some(docs) = self.scope_docs.get(&scope)
+                && let Some(doc) = docs.get(name)
+            {
+                return Some(doc);
+            }
+        }
+        None
+    }
     fn scope_for(&self, path: &Path) -> Option<PathBuf> {
         let norm = normalize_path(path.to_path_buf());
-        self.file_scope
-            .get(&norm)
-            .cloned()
-            .or_else(|| find_scope(&self.scope_roots, &norm))
+        self.file_scope.get(&norm).cloned().or_else(|| {
+            collect_ancestor_scopes(&self.scope_roots, &norm)
+                .into_iter()
+                .next()
+        })
     }
 
     fn docs_for_path(&self, path: &Path) -> Option<&HashMap<String, AssumptionDoc>> {
@@ -65,8 +80,7 @@ impl IndexState {
 
     pub fn hover(&self, path: &Path, position: Position) -> Option<Hover> {
         let tag = self.tag_at(path, position)?;
-        let docs = self.docs_for_path(path)?;
-        let doc = docs.get(&tag.name)?;
+        let doc = self.resolve_assumption(path, &tag.name)?;
         let value = doc.body.clone();
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -103,38 +117,39 @@ impl IndexState {
         };
 
         let mut seen = HashSet::new();
-        let docs: Vec<&AssumptionDoc> = if let Some(docs) = self.docs_for_path(path) {
-            docs.values().collect()
-        } else {
-            self.scope_docs.values().flat_map(|m| m.values()).collect()
-        };
-
-        items.extend(docs.into_iter().filter_map(|doc| {
-            if !typed.is_empty() && !doc.name.starts_with(&typed) {
-                return None;
+        let norm = normalize_path(path.to_path_buf());
+        let scopes = collect_ancestor_scopes(&self.scope_roots, &norm);
+        // Collect from all ancestor scopes (child to parent)
+        for scope in scopes {
+            if let Some(docs) = self.scope_docs.get(&scope) {
+                for doc in docs.values() {
+                    if !typed.is_empty() && !doc.name.starts_with(&typed) {
+                        continue;
+                    }
+                    if !seen.insert(doc.name.clone()) {
+                        continue;
+                    }
+                    items.push(CompletionItem {
+                        label: doc.name.clone(),
+                        insert_text: Some(doc.name.clone()),
+                        filter_text: Some(format!("@ASSUME:{}", doc.name)),
+                        detail: Some(doc.heading.clone()),
+                        documentation: Some(Documentation::MarkupContent(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: doc.body.clone(),
+                        })),
+                        kind: Some(CompletionItemKind::VARIABLE),
+                        text_edit: replace_range.as_ref().map(|range| {
+                            CompletionTextEdit::Edit(TextEdit {
+                                range: *range,
+                                new_text: doc.name.clone(),
+                            })
+                        }),
+                        ..CompletionItem::default()
+                    });
+                }
             }
-            if !seen.insert(doc.name.clone()) {
-                return None;
-            }
-            Some(CompletionItem {
-                label: doc.name.clone(),
-                insert_text: Some(doc.name.clone()),
-                filter_text: Some(format!("@ASSUME:{}", doc.name)),
-                detail: Some(doc.heading.clone()),
-                documentation: Some(Documentation::MarkupContent(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: doc.body.clone(),
-                })),
-                kind: Some(CompletionItemKind::VARIABLE),
-                text_edit: replace_range.as_ref().map(|range| {
-                    CompletionTextEdit::Edit(TextEdit {
-                        range: *range,
-                        new_text: doc.name.clone(),
-                    })
-                }),
-                ..CompletionItem::default()
-            })
-        }));
+        }
         if items.is_empty() {
             return None;
         }
@@ -754,7 +769,10 @@ fn collect_index(root: PathBuf, overlays: HashMap<PathBuf, String>) -> Result<In
             continue;
         }
         let path = normalize_path(path.clone());
-        let Some(scope) = find_scope(&scope_roots, &path) else {
+        let Some(scope) = collect_ancestor_scopes(&scope_roots, &path)
+            .into_iter()
+            .next()
+        else {
             continue;
         };
         let hits = scan_tags_content(text);
@@ -788,9 +806,8 @@ fn compute_diagnostics(state: &IndexState) -> DiagnosticsMap {
         }
     }
     for (path, hits) in &state.tags {
-        let docs = state.docs_for_path(path);
         for hit in hits {
-            let defined = docs.map(|d| d.contains_key(&hit.name)).unwrap_or(false);
+            let defined = state.resolve_assumption(path, &hit.name).is_some();
             if !defined {
                 push_diag(
                     &mut diags,
@@ -946,7 +963,10 @@ fn tags_from_rg(
         if overlay_paths.contains(&path) {
             continue;
         }
-        let Some(scope) = find_scope(scope_roots, &path) else {
+        let Some(scope) = collect_ancestor_scopes(scope_roots, &path)
+            .into_iter()
+            .next()
+        else {
             continue;
         };
         let line_hits = scan_tags_content(&data.lines.text);

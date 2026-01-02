@@ -13,7 +13,11 @@ Use `try_into().unwrap()` not `as u32` - explicit panic w/ trace vs silent trunc
 `# assumption_name` range: [2, 2+len), excludes "# ". Allows rename w/o rewriting prefix.
 
 # scope_resolution_nearest_parent
-Files use nearest parent ASSUM.md. No inheritance - scopes are independent.
+Files inherit assumptions from all ancestor ASSUM.md files.
+
+Child scopes shadow parent definitions for the same assumption name.
+Resolution searches from nearest to root - first match wins.
+
 
 # incremental_indexing
 Overlay updates only reparse changed file, not full workspace.

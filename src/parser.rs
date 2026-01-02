@@ -142,17 +142,18 @@ pub fn content_for(
     }
 }
 
-/// Locate the nearest directory that contains an ASSUM.md root.
+/// Collect all ancestor scopes from nearest to root for inheritance.
 /// @ASSUME:scope_resolution_nearest_parent
-pub fn find_scope(scope_roots: &HashSet<PathBuf>, path: &Path) -> Option<PathBuf> {
+pub fn collect_ancestor_scopes(scope_roots: &HashSet<PathBuf>, path: &Path) -> Vec<PathBuf> {
+    let mut scopes = Vec::new();
     let mut current = path.parent();
     while let Some(dir) = current {
         if scope_roots.contains(dir) {
-            return Some(dir.to_path_buf());
+            scopes.push(dir.to_path_buf());
         }
         current = dir.parent();
     }
-    None
+    scopes
 }
 
 /// Check whether a position lies inside a range (inclusive).
@@ -233,12 +234,11 @@ mod tests {
     #[test]
     fn finds_nearest_scope() {
         let mut scopes = HashSet::new();
-        scopes.insert(PathBuf::from("/root/area"));
-        scopes.insert(PathBuf::from("/root/area/nested"));
-        let path = Path::new("/root/area/nested/file.rs");
+        scopes.insert(PathBuf::from("/root"));
+        scopes.insert(PathBuf::from("/root/subdir"));
         assert_eq!(
-            find_scope(&scopes, path),
-            Some(PathBuf::from("/root/area/nested"))
+            collect_ancestor_scopes(&scopes, Path::new("/root/subdir/file.rs")),
+            vec![PathBuf::from("/root/subdir"), PathBuf::from("/root")]
         );
     }
 
