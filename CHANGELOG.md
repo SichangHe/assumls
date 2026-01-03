@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2](https://github.com/SichangHe/assumls/compare/v0.0.1...v0.0.2) - 2026-01-03
+
+### Fixed
+
+- *(scope)* goto definition/reference & unused check for nested ASSUM.md
+
 ## [0.0.1](https://github.com/SichangHe/assumls/compare/v0.0.0...v0.0.1) - 2026-01-02
 
 ### Fixed
