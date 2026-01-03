@@ -1,6 +1,5 @@
 ---
 source: tests/lsp_e2e.rs
-assertion_line: 266
 expression: snapshot
 ---
 {
@@ -8,6 +7,7 @@ expression: snapshot
     "core_shared",
     "infra_base",
     "shared_name",
+    "utf16_positions",
     "web_only"
   ],
   "highlights": [
