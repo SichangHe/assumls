@@ -750,15 +750,19 @@ fn collect_index(root: PathBuf, overlays: HashMap<PathBuf, String>) -> Result<In
         state.tags.entry(path).or_default().extend(hits);
     }
     state.scope_roots = scope_roots;
-    state.diagnostics = compute_diagnostics(&state);
+    state.diagnostics = compute_diagnostics(&state, &root);
     Ok(state)
 }
 
 /// Compute errors for duplicates/undefined and warnings for unused definitions.
-fn compute_diagnostics(state: &IndexState) -> DiagnosticsMap {
+fn compute_diagnostics(state: &IndexState, root: &Path) -> DiagnosticsMap {
+    let root_norm = normalize_path(root.to_path_buf());
     let mut diags: DiagnosticsMap = HashMap::new();
     for dupes in state.duplicate_defs.values() {
         for doc in dupes {
+            if !doc.path.starts_with(&root_norm) {
+                continue;
+            }
             push_diag(
                 &mut diags,
                 &doc.path,
@@ -769,6 +773,9 @@ fn compute_diagnostics(state: &IndexState) -> DiagnosticsMap {
         }
     }
     for (path, hits) in &state.tags {
+        if !path.starts_with(&root_norm) {
+            continue;
+        }
         for hit in hits {
             let defined = state.resolve_assumption(path, &hit.name).is_some();
             if !defined {
@@ -783,6 +790,9 @@ fn compute_diagnostics(state: &IndexState) -> DiagnosticsMap {
         }
     }
     for (scope, docs) in &state.scope_docs {
+        if !scope.starts_with(&root_norm) {
+            continue;
+        }
         let mut used = HashSet::new();
         for (_path, hits) in state.tags.iter() {
             let file_scopes = collect_ancestor_scopes(&state.scope_roots, _path);
