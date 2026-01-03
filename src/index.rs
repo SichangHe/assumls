@@ -159,9 +159,7 @@ impl IndexState {
 
     pub fn definition(&self, path: &Path, position: Position) -> Option<Vec<Location>> {
         let tag = self.tag_at(path, position)?;
-        let doc = self
-            .docs_for_path(path)
-            .and_then(|docs| docs.get(&tag.name))?;
+        let doc = self.resolve_assumption(path, &tag.name)?;
         let uri = Url::from_file_path(&doc.path).ok()?;
         Some(vec![Location {
             uri,
@@ -176,37 +174,35 @@ impl IndexState {
         include_declaration: bool,
     ) -> Option<Vec<Location>> {
         let tag = self.tag_at(path, position)?;
-        let scope = self.scope_for(path)?;
-        let decl = self
-            .docs_for_path(path)
-            .and_then(|docs| docs.get(&tag.name))
-            .map(|doc| (normalize_path(doc.path.clone()), doc.range));
+        let doc = self.resolve_assumption(path, &tag.name)?;
+        let decl = (normalize_path(doc.path.clone()), doc.range);
         let mut out = Vec::new();
-        if include_declaration
-            && let Some(doc) = self
-                .docs_for_path(path)
-                .and_then(|docs| docs.get(&tag.name))
-            && let Ok(uri) = Url::from_file_path(&doc.path)
-        {
+        if include_declaration && let Ok(uri) = Url::from_file_path(&doc.path) {
             out.push(Location {
                 uri,
                 range: doc.range,
             });
         }
-        for (p, hits) in self
-            .tags
-            .iter()
-            .filter(|(p, _)| self.scope_for(p).as_ref() == Some(&scope))
-        {
+        // Find references in all files that can access this definition via inheritance
+        let def_scope = doc.path.parent().map(|p| normalize_path(p.to_path_buf()));
+        for (p, hits) in self.tags.iter() {
+            // Check if this file can access the definition
+            let can_access = if let Some(ref def_scope) = def_scope {
+                let file_scopes = collect_ancestor_scopes(&self.scope_roots, p);
+                file_scopes.contains(def_scope)
+            } else {
+                false
+            };
+            if !can_access {
+                continue;
+            }
             let norm_path = normalize_path(p.clone());
             let Ok(uri) = Url::from_file_path(&norm_path) else {
                 continue;
             };
             for hit in hits.iter().filter(|h| h.name == tag.name) {
-                if let Some((decl_path, decl_range)) = &decl
-                    && decl_path == &norm_path
-                    && decl_range == &hit.range
-                {
+                // Skip the declaration itself
+                if decl.0 == norm_path && decl.1 == hit.range {
                     continue;
                 }
                 out.push(Location {
@@ -821,14 +817,17 @@ fn compute_diagnostics(state: &IndexState) -> DiagnosticsMap {
     }
     for (scope, docs) in &state.scope_docs {
         let mut used = HashSet::new();
-        for (_path, hits) in state
-            .tags
-            .iter()
-            .filter(|(p, _)| state.scope_for(p).as_ref() == Some(scope))
-        {
+        // Check usage in same scope AND all descendant scopes (via inheritance)
+        for (file_path, hits) in state.tags.iter() {
+            // Check if this file can access definitions in this scope
+            let file_scopes = collect_ancestor_scopes(&state.scope_roots, file_path);
+            if !file_scopes.contains(scope) {
+                continue;
+            }
             for hit in hits {
                 if let Some(doc) = docs.get(&hit.name) {
-                    let is_decl = normalize_path(doc.path.clone()) == normalize_path(_path.clone())
+                    let is_decl = normalize_path(doc.path.clone())
+                        == normalize_path(file_path.clone())
                         && doc.range == hit.range;
                     if !is_decl {
                         used.insert(hit.name.clone());
