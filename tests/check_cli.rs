@@ -26,6 +26,17 @@ fn check_succeeds_on_valid_workspace() -> Result<()> {
 }
 
 #[test]
+fn check_walks_parent_scopes() -> Result<()> {
+    Command::new(assert_cmd::cargo::cargo_bin!("assumls"))
+        .env("RUST_LOG", "off")
+        .arg("check")
+        .arg(ws("src"))
+        .assert()
+        .success();
+    Ok(())
+}
+
+#[test]
 fn check_fails_on_missing_definition() -> Result<()> {
     let assert = Command::new(assert_cmd::cargo::cargo_bin!("assumls"))
         .env("RUST_LOG", "off")

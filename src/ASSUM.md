@@ -1,8 +1,3 @@
-# utf16_positions
-LSP Position.character is UTF-16 code units, not UTF-8 bytes.
-
-Chinese: 3 bytes → 1 unit. Emoji: 4 bytes → 2 units. ASCII: 1 byte = 1 unit.
-
 # rg_exit_code_one
 rg exit 1 = no matches (success), 2+ = error. Accept 0 and 1.
 

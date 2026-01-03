@@ -142,8 +142,20 @@ pub fn content_for(
     }
 }
 
-/// Collect all ancestor scopes from nearest to root for inheritance.
+/// Locate the nearest directory that contains an ASSUM.md root.
 /// @ASSUME:scope_resolution_nearest_parent
+pub fn find_scope(scope_roots: &HashSet<PathBuf>, path: &Path) -> Option<PathBuf> {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if scope_roots.contains(dir) {
+            return Some(dir.to_path_buf());
+        }
+        current = dir.parent();
+    }
+    None
+}
+
+/// Collect all ancestor scopes from nearest to root for inheritance.
 pub fn collect_ancestor_scopes(scope_roots: &HashSet<PathBuf>, path: &Path) -> Vec<PathBuf> {
     let mut scopes = Vec::new();
     let mut current = path.parent();
@@ -234,11 +246,29 @@ mod tests {
     #[test]
     fn finds_nearest_scope() {
         let mut scopes = HashSet::new();
-        scopes.insert(PathBuf::from("/root"));
-        scopes.insert(PathBuf::from("/root/subdir"));
+        scopes.insert(PathBuf::from("/root/area"));
+        scopes.insert(PathBuf::from("/root/area/nested"));
+        let path = Path::new("/root/area/nested/file.rs");
         assert_eq!(
-            collect_ancestor_scopes(&scopes, Path::new("/root/subdir/file.rs")),
-            vec![PathBuf::from("/root/subdir"), PathBuf::from("/root")]
+            find_scope(&scopes, path),
+            Some(PathBuf::from("/root/area/nested"))
+        );
+    }
+
+    #[test]
+    fn collects_ancestors_in_order() {
+        let mut scopes = HashSet::new();
+        scopes.insert(PathBuf::from("/root"));
+        scopes.insert(PathBuf::from("/root/area"));
+        scopes.insert(PathBuf::from("/root/area/nested"));
+        let path = Path::new("/root/area/nested/file.rs");
+        assert_eq!(
+            collect_ancestor_scopes(&scopes, path),
+            vec![
+                PathBuf::from("/root/area/nested"),
+                PathBuf::from("/root/area"),
+                PathBuf::from("/root"),
+            ]
         );
     }
 

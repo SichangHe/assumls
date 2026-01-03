@@ -15,7 +15,8 @@ use tracing::{error, info};
 
 use crate::model::{AssumptionDiagnostic, AssumptionDoc, DiagSeverity, TagHit};
 use crate::parser::{
-    collect_ancestor_scopes, contains, content_for, parse_assumptions_content, scan_tags_content,
+    collect_ancestor_scopes, contains, content_for, find_scope, parse_assumptions_content,
+    scan_tags_content,
 };
 
 pub type DiagnosticsMap = HashMap<PathBuf, Vec<AssumptionDiagnostic>>;
@@ -43,8 +44,6 @@ pub struct IndexState {
 }
 
 impl IndexState {
-    /// Resolve an assumption name with scope inheritance.
-    /// Child scopes inherit from parents, nearest definition wins (shadowing).
     pub fn resolve_assumption(&self, path: &Path, name: &str) -> Option<&AssumptionDoc> {
         let norm = normalize_path(path.to_path_buf());
         let scopes = collect_ancestor_scopes(&self.scope_roots, &norm);
@@ -56,19 +55,6 @@ impl IndexState {
             }
         }
         None
-    }
-    fn scope_for(&self, path: &Path) -> Option<PathBuf> {
-        let norm = normalize_path(path.to_path_buf());
-        self.file_scope.get(&norm).cloned().or_else(|| {
-            collect_ancestor_scopes(&self.scope_roots, &norm)
-                .into_iter()
-                .next()
-        })
-    }
-
-    fn docs_for_path(&self, path: &Path) -> Option<&HashMap<String, AssumptionDoc>> {
-        let scope = self.scope_for(path)?;
-        self.scope_docs.get(&scope)
     }
 
     fn tag_at(&self, path: &Path, position: Position) -> Option<TagHit> {
@@ -119,7 +105,6 @@ impl IndexState {
         let mut seen = HashSet::new();
         let norm = normalize_path(path.to_path_buf());
         let scopes = collect_ancestor_scopes(&self.scope_roots, &norm);
-        // Collect from all ancestor scopes (child to parent)
         for scope in scopes {
             if let Some(docs) = self.scope_docs.get(&scope) {
                 for doc in docs.values() {
@@ -175,6 +160,7 @@ impl IndexState {
     ) -> Option<Vec<Location>> {
         let tag = self.tag_at(path, position)?;
         let doc = self.resolve_assumption(path, &tag.name)?;
+        let def_scope = normalize_path(doc.path.parent()?.to_path_buf());
         let decl = (normalize_path(doc.path.clone()), doc.range);
         let mut out = Vec::new();
         if include_declaration && let Ok(uri) = Url::from_file_path(&doc.path) {
@@ -183,17 +169,9 @@ impl IndexState {
                 range: doc.range,
             });
         }
-        // Find references in all files that can access this definition via inheritance
-        let def_scope = doc.path.parent().map(|p| normalize_path(p.to_path_buf()));
-        for (p, hits) in self.tags.iter() {
-            // Check if this file can access the definition
-            let can_access = if let Some(ref def_scope) = def_scope {
-                let file_scopes = collect_ancestor_scopes(&self.scope_roots, p);
-                file_scopes.contains(def_scope)
-            } else {
-                false
-            };
-            if !can_access {
+        for (p, hits) in &self.tags {
+            let scopes = collect_ancestor_scopes(&self.scope_roots, p);
+            if !scopes.contains(&def_scope) {
                 continue;
             }
             let norm_path = normalize_path(p.clone());
@@ -201,7 +179,6 @@ impl IndexState {
                 continue;
             };
             for hit in hits.iter().filter(|h| h.name == tag.name) {
-                // Skip the declaration itself
                 if decl.0 == norm_path && decl.1 == hit.range {
                     continue;
                 }
@@ -288,26 +265,21 @@ impl IndexState {
         new_name: String,
     ) -> Option<WorkspaceEdit> {
         let tag = self.tag_at(path, position)?;
-        let scope = self.scope_for(path)?;
-        let decl = self
-            .docs_for_path(path)
-            .and_then(|docs| docs.get(&tag.name))
-            .map(|doc| (normalize_path(doc.path.clone()), doc.range));
+        let doc = self.resolve_assumption(path, &tag.name)?;
+        let def_scope = normalize_path(doc.path.parent()?.to_path_buf());
+        let decl = (normalize_path(doc.path.clone()), doc.range);
         let mut edits: HashMap<Url, Vec<TextEdit>> = HashMap::new();
-        if let Some(docs) = self.docs_for_path(path)
-            && let Some(doc) = docs.get(&tag.name)
-            && let Ok(url) = Url::from_file_path(&doc.path)
-        {
+        if let Ok(url) = Url::from_file_path(&doc.path) {
             edits.entry(url).or_default().push(TextEdit {
                 range: doc.range,
                 new_text: new_name.clone(),
             });
         }
-        for (p, hits) in self
-            .tags
-            .iter()
-            .filter(|(p, _)| self.scope_for(p).as_ref() == Some(&scope))
-        {
+        for (p, hits) in &self.tags {
+            let scopes = collect_ancestor_scopes(&self.scope_roots, p);
+            if !scopes.contains(&def_scope) {
+                continue;
+            }
             let norm_path = normalize_path(p.clone());
             let Some(url) = Url::from_file_path(&norm_path).ok() else {
                 continue;
@@ -316,10 +288,7 @@ impl IndexState {
                 .iter()
                 .filter(|hit| hit.name == tag.name)
                 .filter(|hit| {
-                    if let Some((decl_path, decl_range)) = &decl
-                        && decl_path == &norm_path
-                        && decl_range == &hit.range
-                    {
+                    if decl.0 == norm_path && decl.1 == hit.range {
                         return false;
                     }
                     true
@@ -724,7 +693,8 @@ pub async fn build_index(root: PathBuf, overlays: HashMap<PathBuf, String>) -> R
 fn collect_index(root: PathBuf, overlays: HashMap<PathBuf, String>) -> Result<IndexState> {
     let mut state = IndexState::default();
     let mut scope_roots = HashSet::new();
-    let assum_files = find_assum_files(&root, &overlays)?;
+    let mut assum_files = find_assum_files(&root, &overlays)?;
+    assum_files.extend(ancestor_assum_files(&root));
     for path in assum_files {
         let Some(content) = content_for(&path, &overlays)? else {
             continue;
@@ -765,10 +735,7 @@ fn collect_index(root: PathBuf, overlays: HashMap<PathBuf, String>) -> Result<In
             continue;
         }
         let path = normalize_path(path.clone());
-        let Some(scope) = collect_ancestor_scopes(&scope_roots, &path)
-            .into_iter()
-            .next()
-        else {
+        let Some(scope) = find_scope(&scope_roots, &path) else {
             continue;
         };
         let hits = scan_tags_content(text);
@@ -817,17 +784,14 @@ fn compute_diagnostics(state: &IndexState) -> DiagnosticsMap {
     }
     for (scope, docs) in &state.scope_docs {
         let mut used = HashSet::new();
-        // Check usage in same scope AND all descendant scopes (via inheritance)
-        for (file_path, hits) in state.tags.iter() {
-            // Check if this file can access definitions in this scope
-            let file_scopes = collect_ancestor_scopes(&state.scope_roots, file_path);
+        for (_path, hits) in state.tags.iter() {
+            let file_scopes = collect_ancestor_scopes(&state.scope_roots, _path);
             if !file_scopes.contains(scope) {
                 continue;
             }
             for hit in hits {
                 if let Some(doc) = docs.get(&hit.name) {
-                    let is_decl = normalize_path(doc.path.clone())
-                        == normalize_path(file_path.clone())
+                    let is_decl = normalize_path(doc.path.clone()) == normalize_path(_path.clone())
                         && doc.range == hit.range;
                     if !is_decl {
                         used.insert(hit.name.clone());
@@ -925,6 +889,25 @@ fn find_assum_files(root: &Path, overlays: &HashMap<PathBuf, String>) -> Result<
     Ok(files)
 }
 
+fn ancestor_assum_files(root: &Path) -> HashSet<PathBuf> {
+    let mut files = HashSet::new();
+    let mut current = normalize_path(root.to_path_buf());
+    loop {
+        let candidate = current.join("ASSUM.md");
+        if candidate.is_file() {
+            files.insert(normalize_path(candidate));
+        }
+        let Some(parent) = current.parent().map(|p| normalize_path(p.to_path_buf())) else {
+            break;
+        };
+        if parent == current {
+            break;
+        }
+        current = parent;
+    }
+    files
+}
+
 fn tags_from_rg(
     root: &Path,
     scope_roots: &HashSet<PathBuf>,
@@ -962,10 +945,7 @@ fn tags_from_rg(
         if overlay_paths.contains(&path) {
             continue;
         }
-        let Some(scope) = collect_ancestor_scopes(scope_roots, &path)
-            .into_iter()
-            .next()
-        else {
+        let Some(scope) = find_scope(scope_roots, &path) else {
             continue;
         };
         let line_hits = scan_tags_content(&data.lines.text);

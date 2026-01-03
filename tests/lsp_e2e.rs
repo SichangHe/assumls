@@ -1,68 +1,12 @@
-use std::path::PathBuf;
-use std::process::Stdio;
-use std::time::Duration;
+mod common;
 
-use anyhow::{Result, anyhow};
+use std::path::PathBuf;
+
+use anyhow::Result;
+use common::lsp_client::LspClient;
 use insta::assert_json_snapshot;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{ChildStdin, ChildStdout, Command};
-use tokio::time::timeout;
 use tower_lsp::lsp_types::Url;
-
-async fn send_payload(writer: &mut ChildStdin, payload: Value) -> Result<()> {
-    let text = payload.to_string();
-    let header = format!("Content-Length: {}\r\n\r\n", text.len());
-    writer.write_all(header.as_bytes()).await?;
-    writer.write_all(text.as_bytes()).await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-async fn request(writer: &mut ChildStdin, id: u64, method: &str, params: Value) -> Result<()> {
-    let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-    send_payload(writer, payload).await
-}
-
-async fn notify(writer: &mut ChildStdin, method: &str, params: Value) -> Result<()> {
-    let payload = json!({"jsonrpc": "2.0", "method": method, "params": params});
-    send_payload(writer, payload).await
-}
-
-async fn read_message(reader: &mut BufReader<ChildStdout>) -> Result<Option<Value>> {
-    let mut content_length = None;
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).await? == 0 {
-            return Ok(None);
-        }
-        if line == "\r\n" {
-            break;
-        }
-        if let Some(rest) = line.strip_prefix("Content-Length:") {
-            content_length = rest.trim().parse::<usize>().ok();
-        }
-    }
-    let len = match content_length {
-        Some(len) => len,
-        None => return Ok(None),
-    };
-    let mut buf = vec![0u8; len];
-    reader.read_exact(&mut buf).await?;
-    let value = serde_json::from_slice(&buf)?;
-    Ok(Some(value))
-}
-
-async fn read_response(reader: &mut BufReader<ChildStdout>, id: u64) -> Result<Value> {
-    loop {
-        let msg = read_message(reader)
-            .await?
-            .ok_or_else(|| anyhow!("stream closed"))?;
-        if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
-            return Ok(msg);
-        }
-    }
-}
 
 #[tokio::test]
 async fn lsp_hover_rename_completion() -> Result<()> {
@@ -72,89 +16,21 @@ async fn lsp_hover_rename_completion() -> Result<()> {
     let assum = ws.join("web/ASSUM.md");
     let assum_uri = Url::from_file_path(&assum).unwrap().to_string();
     let root_uri = Url::from_file_path(&ws).unwrap().to_string();
-    let app_text = std::fs::read_to_string(&file)?;
-    let assum_text = std::fs::read_to_string(&assum)?;
+    let mut client = LspClient::spawn(&ws).await?;
+    client
+        .did_open(&file, std::fs::read_to_string(&file)?)
+        .await?;
+    client
+        .did_open(&assum, std::fs::read_to_string(&assum)?)
+        .await?;
 
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("assumls"));
-    cmd.arg("lsp");
-    cmd.kill_on_drop(true);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::inherit());
-    let mut child = cmd.spawn()?;
-    let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("stdin missing"))?;
-    let mut stdout = BufReader::new(
-        child
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("stdout missing"))?,
-    );
+    let hover = client.hover(&file, 0, 12).await?;
 
-    request(
-        &mut stdin,
-        1,
-        "initialize",
-        json!({"rootUri": root_uri, "capabilities": {}}),
-    )
-    .await?;
-    let _ = timeout(Duration::from_secs(5), read_response(&mut stdout, 1)).await??;
-
-    notify(
-        &mut stdin,
-        "textDocument/didOpen",
-        json!({
-            "textDocument": {
-                "uri": uri,
-                "languageId": "javascript",
-                "version": 1,
-                "text": app_text,
-            }
-        }),
-    )
-    .await?;
-
-    notify(
-        &mut stdin,
-        "textDocument/didOpen",
-        json!({
-            "textDocument": {
-                "uri": assum_uri,
-                "languageId": "markdown",
-                "version": 1,
-                "text": assum_text,
-            }
-        }),
-    )
-    .await?;
-
-    request(
-        &mut stdin,
-        2,
-        "textDocument/hover",
-        json!({
-            "textDocument": {"uri": uri},
-            "position": {"line": 0, "character": 12},
-        }),
-    )
-    .await?;
-    let hover = timeout(Duration::from_secs(5), read_response(&mut stdout, 2)).await??;
-
-    request(
-        &mut stdin,
-        3,
-        "textDocument/completion",
-        json!({
-            "textDocument": {"uri": uri},
-            "position": {"line": 0, "character": 11},
-        }),
-    )
-    .await?;
-    let completion = timeout(Duration::from_secs(5), read_response(&mut stdout, 3)).await??;
+    let completion = client.completion(&file, 0, 11).await?;
     let items = completion
         .get("result")
         .and_then(|r| r.get("items"))
-        .and_then(|i| i.as_array())
-        .cloned()
+        .and_then(|i| i.as_array().cloned())
         .or_else(|| completion.get("result").and_then(|r| r.as_array().cloned()))
         .unwrap_or_default();
     let mut labels = items
@@ -163,87 +39,71 @@ async fn lsp_hover_rename_completion() -> Result<()> {
         .collect::<Vec<_>>();
     labels.sort();
 
-    request(
-        &mut stdin,
-        4,
-        "textDocument/documentHighlight",
-        json!({
-            "textDocument": {"uri": uri},
-            "position": {"line": 0, "character": 3},
-        }),
-    )
-    .await?;
-    let highlights = timeout(Duration::from_secs(5), read_response(&mut stdout, 4)).await??;
+    let highlights = client
+        .request(
+            "textDocument/documentHighlight",
+            json!({
+                "textDocument": {"uri": uri},
+                "position": {"line": 0, "character": 3},
+            }),
+        )
+        .await?;
 
-    request(
-        &mut stdin,
-        5,
-        "textDocument/semanticTokens/full",
-        json!({
-            "textDocument": {"uri": uri},
-        }),
-    )
-    .await?;
-    let semantic_tokens = timeout(Duration::from_secs(5), read_response(&mut stdout, 5)).await??;
+    let semantic_tokens = client
+        .request(
+            "textDocument/semanticTokens/full",
+            json!({
+                "textDocument": {"uri": uri},
+            }),
+        )
+        .await?;
 
-    request(
-        &mut stdin,
-        6,
-        "textDocument/references",
-        json!({
-            "textDocument": {"uri": uri},
-            "position": {"line": 0, "character": 12},
-            "context": {"includeDeclaration": true},
-        }),
-    )
-    .await?;
-    let references_from_use =
-        timeout(Duration::from_secs(5), read_response(&mut stdout, 6)).await??;
+    let references_from_use = client
+        .request(
+            "textDocument/references",
+            json!({
+                "textDocument": {"uri": uri},
+                "position": {"line": 0, "character": 12},
+                "context": {"includeDeclaration": true},
+            }),
+        )
+        .await?;
 
-    request(
-        &mut stdin,
-        7,
-        "textDocument/references",
-        json!({
-            "textDocument": {"uri": assum_uri},
-            "position": {"line": 0, "character": 4},
-            "context": {"includeDeclaration": true},
-        }),
-    )
-    .await?;
-    let references_from_definition =
-        timeout(Duration::from_secs(5), read_response(&mut stdout, 7)).await??;
+    let references_from_definition = client
+        .request(
+            "textDocument/references",
+            json!({
+                "textDocument": {"uri": assum_uri},
+                "position": {"line": 0, "character": 4},
+                "context": {"includeDeclaration": true},
+            }),
+        )
+        .await?;
 
-    request(
-        &mut stdin,
-        8,
-        "textDocument/references",
-        json!({
-            "textDocument": {"uri": assum_uri},
-            "position": {"line": 3, "character": 20},
-            "context": {"includeDeclaration": true},
-        }),
-    )
-    .await?;
-    let references_web_only =
-        timeout(Duration::from_secs(5), read_response(&mut stdout, 8)).await??;
+    let references_web_only = client
+        .request(
+            "textDocument/references",
+            json!({
+                "textDocument": {"uri": assum_uri},
+                "position": {"line": 3, "character": 20},
+                "context": {"includeDeclaration": true},
+            }),
+        )
+        .await?;
 
-    request(
-        &mut stdin,
-        9,
-        "textDocument/rename",
-        json!({
-            "textDocument": {"uri": uri},
-            "position": {"line": 0, "character": 12},
-            "newName": "shared_web",
-        }),
-    )
-    .await?;
-    let rename = timeout(Duration::from_secs(5), read_response(&mut stdout, 9)).await??;
+    let rename = client
+        .request(
+            "textDocument/rename",
+            json!({
+                "textDocument": {"uri": uri},
+                "position": {"line": 0, "character": 12},
+                "newName": "shared_web",
+            }),
+        )
+        .await?;
 
-    request(&mut stdin, 10, "shutdown", json!({})).await?;
-    let _ = timeout(Duration::from_secs(5), read_response(&mut stdout, 10)).await??;
-    notify(&mut stdin, "exit", json!({})).await?;
+    let _ = client.request("shutdown", json!({})).await?;
+    client.notify("exit", json!({})).await?;
 
     let snapshot = json!({
         "hover": hover.get("result"),

@@ -1,6 +1,6 @@
 ---
 source: tests/lsp_e2e.rs
-assertion_line: 267
+assertion_line: 266
 expression: snapshot
 ---
 {
