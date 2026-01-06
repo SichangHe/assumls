@@ -314,6 +314,10 @@ impl IndexState {
         }
     }
 
+    pub fn rename_range(&self, path: &Path, position: Position) -> Option<Range> {
+        self.tag_at(path, position).map(|hit| hit.name_range)
+    }
+
     pub fn diagnostics(&self) -> DiagnosticsMap {
         self.diagnostics.clone()
     }
@@ -481,6 +485,10 @@ pub enum IndexCall {
         uri: Url,
         position: Position,
     },
+    PrepareRename {
+        uri: Url,
+        position: Position,
+    },
     Rename {
         uri: Url,
         position: Position,
@@ -497,6 +505,7 @@ pub enum IndexReply {
     References(Vec<Location>),
     SemanticTokens(Option<SemanticTokens>),
     DocumentHighlight(Vec<DocumentHighlight>),
+    PrepareRename(Option<Range>),
     Rename(Option<WorkspaceEdit>),
     Diagnostics(DiagnosticsMap),
 }
@@ -655,6 +664,14 @@ impl Actor for AssumptionIndex {
                     let _ = reply_sender.send(IndexReply::DocumentHighlight(
                         highlights.unwrap_or_default(),
                     ));
+                }
+                IndexCall::PrepareRename { uri, position } => {
+                    let range = self.state.as_ref().and_then(|state| {
+                        uri.to_file_path()
+                            .ok()
+                            .and_then(|p| state.rename_range(&p, position))
+                    });
+                    let _ = reply_sender.send(IndexReply::PrepareRename(range));
                 }
                 IndexCall::Rename {
                     uri,

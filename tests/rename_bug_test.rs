@@ -98,3 +98,65 @@ async fn test_rename_updates_all_references() -> Result<()> {
     assert_eq!(assum_edits[0]["newText"], "renamed_test");
     Ok(())
 }
+
+#[tokio::test]
+async fn test_rename_ignored_outside_assumptions() -> Result<()> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_data/rg_no_assum_test");
+    let file = root.join("main.rs");
+    let mut client = LspClient::spawn(&root).await?;
+    client
+        .did_open(&file, std::fs::read_to_string(&file)?)
+        .await?;
+
+    let rename = client
+        .request(
+            "textDocument/rename",
+            json!({
+                "textDocument": {"uri": Url::from_file_path(&file).unwrap()},
+                "position": {"line": 0, "character": 0},
+                "newName": "NotSnake",
+            }),
+        )
+        .await?;
+
+    assert!(rename.get("error").is_none());
+    assert!(rename.get("result").is_some_and(|v| v.is_null()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_prepare_rename_scopes() -> Result<()> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_data/rename_test");
+    let assum_path = root.join("ASSUM.md");
+    let mut client = LspClient::spawn(&root).await?;
+    client
+        .did_open(&assum_path, std::fs::read_to_string(&assum_path)?)
+        .await?;
+
+    let ok = client
+        .request(
+            "textDocument/prepareRename",
+            json!({
+                "textDocument": {"uri": Url::from_file_path(&assum_path).unwrap()},
+                "position": {"line": 0, "character": 4},
+            }),
+        )
+        .await?;
+    let range = ok["result"].as_object().unwrap();
+    assert_eq!(range["start"]["line"], 0);
+    assert_eq!(range["start"]["character"], 2);
+    assert_eq!(range["end"]["line"], 0);
+    assert_eq!(range["end"]["character"], 10);
+
+    let bad = client
+        .request(
+            "textDocument/prepareRename",
+            json!({
+                "textDocument": {"uri": Url::from_file_path(&assum_path).unwrap()},
+                "position": {"line": 0, "character": 0},
+            }),
+        )
+        .await?;
+    assert!(bad.get("result").is_some_and(|v| v.is_null()));
+    Ok(())
+}

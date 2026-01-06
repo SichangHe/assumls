@@ -130,7 +130,10 @@ impl Backend {
             }),
             definition_provider: Some(OneOf::Left(true)),
             references_provider: Some(OneOf::Left(true)),
-            rename_provider: Some(OneOf::Left(true)),
+            rename_provider: Some(OneOf::Right(RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: Default::default(),
+            })),
             document_highlight_provider: Some(OneOf::Left(true)),
             semantic_tokens_provider: Some(
                 SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
@@ -321,14 +324,25 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn rename(&self, params: RenameParams) -> RpcResult<Option<WorkspaceEdit>> {
-        if !is_valid_assumption_name(&params.new_name) {
-            return Err(jsonrpc::Error {
-                code: jsonrpc::ErrorCode::InvalidParams,
-                message: "assumption names must be snake_case starting with a letter".into(),
-                data: None,
-            });
+    async fn prepare_rename(
+        &self,
+        params: tower_lsp::lsp_types::TextDocumentPositionParams,
+    ) -> RpcResult<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri;
+        let position = params.position;
+        let reply = self
+            .index
+            .call(IndexCall::PrepareRename { uri, position })
+            .await
+            .map_err(Self::internal_error)?;
+        if let IndexReply::PrepareRename(range) = reply {
+            Ok(range.map(PrepareRenameResponse::Range))
+        } else {
+            Ok(None)
         }
+    }
+
+    async fn rename(&self, params: RenameParams) -> RpcResult<Option<WorkspaceEdit>> {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let reply = self
@@ -336,14 +350,20 @@ impl LanguageServer for Backend {
             .call(IndexCall::Rename {
                 uri,
                 position,
-                new_name: params.new_name,
+                new_name: params.new_name.clone(),
             })
             .await
             .map_err(Self::internal_error)?;
-        if let IndexReply::Rename(edit) = reply {
-            Ok(edit)
-        } else {
-            Ok(None)
+        match reply {
+            IndexReply::Rename(Some(_)) if !is_valid_assumption_name(&params.new_name) => {
+                Err(jsonrpc::Error {
+                    code: jsonrpc::ErrorCode::InvalidParams,
+                    message: "assumption names must be snake_case starting with a letter".into(),
+                    data: None,
+                })
+            }
+            IndexReply::Rename(edit) => Ok(edit),
+            _ => Ok(None),
         }
     }
 
