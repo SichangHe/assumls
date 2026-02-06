@@ -77,69 +77,59 @@ impl IndexState {
         })
     }
 
-    pub fn completion(
-        &self,
-        path: &Path,
-        ctx: Option<(Range, String)>,
-    ) -> Option<CompletionResponse> {
-        let mut typed = String::new();
-        let mut replace_range = None;
-        let include_prefix = ctx.is_none();
-        if let Some((range, name)) = ctx {
-            typed = name;
-            replace_range = Some(range);
-        }
-
-        let mut items: Vec<CompletionItem> = if include_prefix {
-            vec![CompletionItem {
-                label: "ASSUME:".into(),
-                insert_text: Some("ASSUME:".into()),
-                detail: Some("Insert @ASSUME prefix.".into()),
-                kind: Some(CompletionItemKind::KEYWORD),
-                ..CompletionItem::default()
-            }]
-        } else {
-            Vec::new()
-        };
-
-        let mut seen = HashSet::new();
-        let norm = normalize_path(path.to_path_buf());
-        let scopes = collect_ancestor_scopes(&self.scope_roots, &norm);
-        for scope in scopes {
-            if let Some(docs) = self.scope_docs.get(&scope) {
-                for doc in docs.values() {
-                    if !typed.is_empty() && !doc.name.starts_with(&typed) {
-                        continue;
+    fn completion(&self, path: &Path, ctx: CompletionContext) -> Option<CompletionResponse> {
+        match ctx {
+            CompletionContext::NoContext => None,
+            CompletionContext::AtSign => {
+                let items = vec![CompletionItem {
+                    label: "ASSUME:".into(),
+                    insert_text: Some("ASSUME:".into()),
+                    detail: Some("Insert @ASSUME prefix.".into()),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    ..CompletionItem::default()
+                }];
+                Some(CompletionResponse::Array(items))
+            }
+            CompletionContext::AfterMarker(replace_range, typed) => {
+                let mut items: Vec<CompletionItem> = Vec::new();
+                let mut seen = HashSet::new();
+                let norm = normalize_path(path.to_path_buf());
+                let scopes = collect_ancestor_scopes(&self.scope_roots, &norm);
+                for scope in scopes {
+                    if let Some(docs) = self.scope_docs.get(&scope) {
+                        for doc in docs.values() {
+                            if !typed.is_empty() && !doc.name.starts_with(&typed) {
+                                continue;
+                            }
+                            if !seen.insert(doc.name.clone()) {
+                                continue;
+                            }
+                            items.push(CompletionItem {
+                                label: doc.name.clone(),
+                                insert_text: Some(doc.name.clone()),
+                                filter_text: Some(format!("@ASSUME:{}", doc.name)),
+                                detail: Some(doc.heading.clone()),
+                                documentation: Some(Documentation::MarkupContent(MarkupContent {
+                                    kind: MarkupKind::Markdown,
+                                    value: doc.body.clone(),
+                                })),
+                                kind: Some(CompletionItemKind::VARIABLE),
+                                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                                    range: replace_range,
+                                    new_text: doc.name.clone(),
+                                })),
+                                ..CompletionItem::default()
+                            });
+                        }
                     }
-                    if !seen.insert(doc.name.clone()) {
-                        continue;
-                    }
-                    items.push(CompletionItem {
-                        label: doc.name.clone(),
-                        insert_text: Some(doc.name.clone()),
-                        filter_text: Some(format!("@ASSUME:{}", doc.name)),
-                        detail: Some(doc.heading.clone()),
-                        documentation: Some(Documentation::MarkupContent(MarkupContent {
-                            kind: MarkupKind::Markdown,
-                            value: doc.body.clone(),
-                        })),
-                        kind: Some(CompletionItemKind::VARIABLE),
-                        text_edit: replace_range.as_ref().map(|range| {
-                            CompletionTextEdit::Edit(TextEdit {
-                                range: *range,
-                                new_text: doc.name.clone(),
-                            })
-                        }),
-                        ..CompletionItem::default()
-                    });
                 }
+                if items.is_empty() {
+                    return None;
+                }
+                items.sort_by(|a, b| a.label.cmp(&b.label));
+                Some(CompletionResponse::Array(items))
             }
         }
-        if items.is_empty() {
-            return None;
-        }
-        items.sort_by(|a, b| a.label.cmp(&b.label));
-        Some(CompletionResponse::Array(items))
     }
 
     pub fn definition(&self, path: &Path, position: Position) -> Option<Vec<Location>> {
@@ -411,32 +401,53 @@ impl AssumptionIndex {
         }
         state.diagnostics()
     }
-    fn completion_ctx(&self, path: &Path, position: Position) -> Option<(Range, String)> {
-        let text = content_for(path, &self.overlays).ok()??;
-        let line_idx = usize::try_from(position.line).ok()?;
-        let char_idx = usize::try_from(position.character).ok()?;
-        let line = text.lines().nth(line_idx)?;
+    fn completion_ctx(&self, path: &Path, position: Position) -> CompletionContext {
+        let text = match content_for(path, &self.overlays).ok().flatten() {
+            Some(t) => t,
+            None => return CompletionContext::NoContext,
+        };
+        let line_idx = match usize::try_from(position.line).ok() {
+            Some(i) => i,
+            None => return CompletionContext::NoContext,
+        };
+        let char_idx = match usize::try_from(position.character).ok() {
+            Some(i) => i,
+            None => return CompletionContext::NoContext,
+        };
+        let line = match text.lines().nth(line_idx) {
+            Some(l) => l,
+            None => return CompletionContext::NoContext,
+        };
         let prefix: String = line.chars().take(char_idx).collect();
         let marker = "@ASSUME:";
-        let idx = match prefix.rfind(marker) {
-            Some(i) => i,
-            None => {
-                info!(path = %path.display(), line = line_idx, character = char_idx, "completion_ctx missing marker");
-                return None;
-            }
-        };
-        let start_char = u32::try_from(idx + marker.len()).ok()?;
-        Some((
-            Range {
-                start: Position {
-                    line: position.line,
-                    character: start_char,
+        if let Some(idx) = prefix.rfind(marker) {
+            let start_char = match u32::try_from(idx + marker.len()).ok() {
+                Some(c) => c,
+                None => return CompletionContext::NoContext,
+            };
+            return CompletionContext::AfterMarker(
+                Range {
+                    start: Position {
+                        line: position.line,
+                        character: start_char,
+                    },
+                    end: position,
                 },
-                end: position,
-            },
-            prefix[idx + marker.len()..].to_string(),
-        ))
+                prefix[idx + marker.len()..].to_string(),
+            );
+        }
+        if prefix.rfind('@').is_some() {
+            return CompletionContext::AtSign;
+        }
+        info!(path = %path.display(), line = line_idx, character = char_idx, "completion_ctx no @ found");
+        CompletionContext::NoContext
     }
+}
+
+enum CompletionContext {
+    NoContext,
+    AtSign,
+    AfterMarker(Range, String),
 }
 
 impl Default for AssumptionIndex {
@@ -602,7 +613,7 @@ impl Actor for AssumptionIndex {
                         uri.to_file_path().ok().and_then(|p| {
                             path_str = p.display().to_string();
                             let ctx = self.completion_ctx(&p, position);
-                            ctx_found = ctx.is_some();
+                            ctx_found = !matches!(ctx, CompletionContext::NoContext);
                             state.completion(&p, ctx)
                         })
                     });

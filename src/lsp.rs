@@ -368,6 +368,7 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        info!(uri = %params.text_document.uri, version = params.text_document.version, "did_open");
         let Some(_path) = params.text_document.uri.to_file_path().ok() else {
             return;
         };

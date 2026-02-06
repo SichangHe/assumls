@@ -132,7 +132,8 @@ pub fn content_for(
     path: &Path,
     overlays: &std::collections::HashMap<PathBuf, String>,
 ) -> Result<Option<String>> {
-    if let Some(text) = overlays.get(path) {
+    let normalized = crate::index::normalize_path(path.to_path_buf());
+    if let Some(text) = overlays.get(&normalized) {
         return Ok(Some(text.clone()));
     }
     match std::fs::read_to_string(path) {

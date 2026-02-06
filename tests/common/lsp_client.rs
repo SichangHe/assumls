@@ -81,7 +81,7 @@ impl LspClient {
         let uri = Url::from_file_path(file).unwrap().to_string();
         self.notify(
             "textDocument/didOpen",
-            json!({"textDocument": {"uri": uri, "text": text, "version": 1}}),
+            json!({"textDocument": {"uri": uri, "text": text, "version": 1, "languageId": "text"}}),
         )
         .await
     }
