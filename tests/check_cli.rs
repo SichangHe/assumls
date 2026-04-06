@@ -93,3 +93,41 @@ fn check_fails_on_duplicate_definition() -> Result<()> {
     assert_snapshot!("check_duplicate_def", body);
     Ok(())
 }
+
+#[test]
+fn check_warns_on_cross_scope_duplicate_body() -> Result<()> {
+    let assert = Command::new(assert_cmd::cargo::cargo_bin!("assumls"))
+        .env("RUST_LOG", "off")
+        .arg("check")
+        .arg(ws("test_data/cli_duplicate_scope"))
+        .assert()
+        .success();
+    let out = assert.get_output();
+    let body = format!(
+        "status: {:?}\nstdout:\n{}stderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_snapshot!("check_duplicate_scope", body);
+    Ok(())
+}
+
+#[test]
+fn check_hints_to_move_definition_to_common_parent() -> Result<()> {
+    let assert = Command::new(assert_cmd::cargo::cargo_bin!("assumls"))
+        .env("RUST_LOG", "off")
+        .arg("check")
+        .arg(ws("test_data/cli_move_to_parent"))
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    let body = format!(
+        "status: {:?}\nstdout:\n{}stderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_snapshot!("check_move_to_parent_hint", body);
+    Ok(())
+}

@@ -17,7 +17,7 @@ pub async fn run_lint(root: PathBuf) -> Result<i32> {
     let state = build_index(root_abs.clone(), HashMap::new()).await?;
     let mut entries: Vec<_> = state.diagnostics().into_iter().collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut had_error = false;
+    let mut rendered = Vec::new();
     for (path, mut items) in entries {
         items.sort_by(|a, b| {
             a.range
@@ -29,12 +29,15 @@ pub async fn run_lint(root: PathBuf) -> Result<i32> {
                 .then_with(|| a.message.cmp(&b.message))
         });
         for diag in items {
-            if matches!(diag.severity, DiagSeverity::Error) {
-                had_error = true;
-            }
             let display_path = path.strip_prefix(&root_abs).unwrap_or(&path);
-            print_diag(display_path, &diag);
+            rendered.push((display_path.to_path_buf(), diag));
         }
+    }
+    let had_error = rendered
+        .iter()
+        .any(|(_, diag)| matches!(diag.severity, DiagSeverity::Error));
+    for (path, diag) in &rendered {
+        print_diag(path, diag, had_error);
     }
     Ok(if had_error { 1 } else { 0 })
 }
@@ -47,7 +50,7 @@ fn severity_rank(severity: DiagSeverity) -> u8 {
 }
 
 /// Print one diagnostic in compiler-style format.
-fn print_diag(path: &std::path::Path, diag: &AssumptionDiagnostic) {
+fn print_diag(path: &std::path::Path, diag: &AssumptionDiagnostic, show_hint: bool) {
     let line = diag.range.start.line + 1;
     let col = diag.range.start.character + 1;
     let severity = match diag.severity {
@@ -62,4 +65,7 @@ fn print_diag(path: &std::path::Path, diag: &AssumptionDiagnostic) {
         severity,
         diag.message
     );
+    if show_hint && let Some(hint) = &diag.hint {
+        println!("  hint: {hint}");
+    }
 }

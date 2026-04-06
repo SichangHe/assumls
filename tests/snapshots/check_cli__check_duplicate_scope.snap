@@ -1,0 +1,11 @@
+---
+source: tests/check_cli.rs
+assertion_line: 112
+expression: body
+---
+status: Some(0)
+stdout:
+ASSUM.md:1:3: warning: assumption `shared_duplicate` has the same definition in `sub/ASSUM.md`; move both to a common ancestor ASSUM.md
+sub/ASSUM.md:1:3: warning: assumption `shared_duplicate` has the same definition in `ASSUM.md`; move both to a common ancestor ASSUM.md
+sub/ASSUM.md:1:3: warning: assumption `shared_duplicate` unused
+stderr:

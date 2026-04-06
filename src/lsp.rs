@@ -447,7 +447,10 @@ fn to_lsp_diag(diag: &AssumptionDiagnostic) -> Diagnostic {
         code: None,
         code_description: None,
         source: Some("AssumLS".into()),
-        message: diag.message.clone(),
+        message: match &diag.hint {
+            Some(hint) => format!("{}\nhint: {}", diag.message, hint),
+            None => diag.message.clone(),
+        },
         related_information: None,
         tags: if is_unused {
             Some(vec![DiagnosticTag::UNNECESSARY])
@@ -455,5 +458,40 @@ fn to_lsp_diag(diag: &AssumptionDiagnostic) -> Diagnostic {
             None
         },
         data: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use tower_lsp::lsp_types::{Position, Range};
+
+    use super::to_lsp_diag;
+    use crate::model::{AssumptionDiagnostic, DiagSeverity};
+
+    #[test]
+    fn lsp_diag_includes_hint_label_in_message() {
+        let diag = AssumptionDiagnostic {
+            path: PathBuf::from("/tmp/file.rs"),
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 8,
+                },
+            },
+            message: "assumption `missing` not defined in scope".to_string(),
+            hint: Some("add `# missing` to `ASSUM.md`".to_string()),
+            severity: DiagSeverity::Error,
+        };
+        let lsp_diag = to_lsp_diag(&diag);
+        assert_eq!(
+            lsp_diag.message,
+            "assumption `missing` not defined in scope\nhint: add `# missing` to `ASSUM.md`"
+        );
     }
 }

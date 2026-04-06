@@ -796,7 +796,54 @@ fn compute_diagnostics(state: &IndexState, root: &Path) -> DiagnosticsMap {
                 &doc.path,
                 doc.range,
                 format!("Duplicate definition of assumption `{}` in scope", doc.name),
+                Some(format!(
+                    "delete this duplicate `# {}` heading from `{}`",
+                    doc.name,
+                    display_path_for_hint(&doc.path, &root_norm)
+                )),
                 DiagSeverity::Error,
+            );
+        }
+    }
+    let mut same_body_defs: HashMap<(String, String), Vec<(PathBuf, AssumptionDoc)>> =
+        HashMap::new();
+    for (scope, docs) in &state.scope_docs {
+        if !scope.starts_with(&root_norm) {
+            continue;
+        }
+        for doc in docs.values() {
+            if !doc.path.starts_with(&root_norm) {
+                continue;
+            }
+            same_body_defs
+                .entry((doc.name.clone(), doc.body.clone()))
+                .or_default()
+                .push((scope.clone(), doc.clone()));
+        }
+    }
+    for ((name, _), defs) in same_body_defs {
+        let mut scopes = HashSet::new();
+        for (scope, _) in &defs {
+            scopes.insert(scope.clone());
+        }
+        if scopes.len() < 2 {
+            continue;
+        }
+        for (scope, doc) in &defs {
+            let Some((_, other)) = defs.iter().find(|(other_scope, _)| other_scope != scope) else {
+                continue;
+            };
+            push_diag(
+                &mut diags,
+                &doc.path,
+                doc.range,
+                format!(
+                    "assumption `{}` has the same definition in `{}`; move both to a common ancestor ASSUM.md",
+                    name,
+                    display_path_for_hint(&other.path, &root_norm)
+                ),
+                None,
+                DiagSeverity::Warning,
             );
         }
     }
@@ -807,11 +854,26 @@ fn compute_diagnostics(state: &IndexState, root: &Path) -> DiagnosticsMap {
         for hit in hits {
             let defined = state.resolve_assumption(path, &hit.name).is_some();
             if !defined {
+                let hint = move_to_common_parent_hint(state, path, &hit.name, &root_norm)
+                    .unwrap_or_else(|| {
+                        let target_assum = state
+                            .file_scope
+                            .get(path)
+                            .map(|scope| scope.join("ASSUM.md"))
+                            .unwrap_or_else(|| root_norm.join("ASSUM.md"));
+                        format!(
+                            "add `# {}` to `{}` or delete this `@ASSUME:{}` tag",
+                            hit.name,
+                            display_path_for_hint(&target_assum, &root_norm),
+                            hit.name
+                        )
+                    });
                 push_diag(
                     &mut diags,
                     path,
                     hit.range,
                     format!("assumption `{}` not defined in scope", hit.name),
+                    Some(hint),
                     DiagSeverity::Error,
                 );
             }
@@ -844,6 +906,12 @@ fn compute_diagnostics(state: &IndexState, root: &Path) -> DiagnosticsMap {
                     &doc.path,
                     doc.range,
                     format!("assumption `{}` unused", name),
+                    Some(format!(
+                        "delete `# {}` from `{}` or add `@ASSUME:{}` in code",
+                        name,
+                        display_path_for_hint(&doc.path, &root_norm),
+                        name
+                    )),
                     DiagSeverity::Warning,
                 );
             }
@@ -857,6 +925,7 @@ fn push_diag(
     path: &Path,
     range: Range,
     message: String,
+    hint: Option<String>,
     severity: DiagSeverity,
 ) {
     diags
@@ -866,8 +935,68 @@ fn push_diag(
             path: path.to_path_buf(),
             range,
             message,
+            hint,
             severity,
         });
+}
+
+fn display_path_for_hint(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+fn move_to_common_parent_hint(
+    state: &IndexState,
+    path: &Path,
+    name: &str,
+    root: &Path,
+) -> Option<String> {
+    let current_scope = state.file_scope.get(path)?.clone();
+    let current_ancestors: HashSet<PathBuf> =
+        current_scope.ancestors().map(PathBuf::from).collect();
+    let mut best: Option<(usize, PathBuf, AssumptionDoc)> = None;
+    for (scope, docs) in &state.scope_docs {
+        let Some(doc) = docs.get(name) else {
+            continue;
+        };
+        if current_ancestors.contains(scope) {
+            continue;
+        }
+        let Some(common_parent) = nearest_common_parent(&current_scope, scope) else {
+            continue;
+        };
+        let score = common_parent.components().count();
+        match &best {
+            Some((best_score, best_parent, best_doc)) => {
+                let replace = score > *best_score
+                    || (score == *best_score
+                        && (common_parent < *best_parent
+                            || (common_parent == *best_parent && doc.path < best_doc.path)));
+                if replace {
+                    best = Some((score, common_parent, doc.clone()));
+                }
+            }
+            _ => best = Some((score, common_parent, doc.clone())),
+        }
+    }
+    let (_, common_parent, doc) = best?;
+    let target_assum = common_parent.join("ASSUM.md");
+    Some(format!(
+        "move `# {}` from `{}` to `{}` so both directories inherit it, or delete this `@ASSUME:{}` tag",
+        name,
+        display_path_for_hint(&doc.path, root),
+        display_path_for_hint(&target_assum, root),
+        name
+    ))
+}
+
+fn nearest_common_parent(left: &Path, right: &Path) -> Option<PathBuf> {
+    let right_ancestors: HashSet<PathBuf> = right.ancestors().map(PathBuf::from).collect();
+    left.ancestors()
+        .map(PathBuf::from)
+        .find(|ancestor| right_ancestors.contains(ancestor))
 }
 
 pub type AssumptionIndexRef = ActorRef<AssumptionIndex>;

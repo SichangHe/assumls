@@ -1,11 +1,16 @@
 ---
 source: tests/check_cli.rs
+assertion_line: 54
 expression: body
 ---
 status: Some(1)
 stdout:
 ASSUM.md:6:3: warning: assumption `unused_root` unused
+  hint: delete `# unused_root` from `ASSUM.md` or add `@ASSUME:unused_root` in code
 main.rs:2:4: error: assumption `missing_root` not defined in scope
+  hint: add `# missing_root` to `ASSUM.md` or delete this `@ASSUME:missing_root` tag
 services/api/handler.py:2:3: error: assumption `ghost_api` not defined in scope
+  hint: add `# ghost_api` to `services/api/ASSUM.md` or delete this `@ASSUME:ghost_api` tag
 web/app.js:3:4: error: assumption `missing_web` not defined in scope
+  hint: add `# missing_web` to `web/ASSUM.md` or delete this `@ASSUME:missing_web` tag
 stderr:

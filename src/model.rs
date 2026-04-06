@@ -10,6 +10,7 @@ pub struct AssumptionDiagnostic {
     pub range: Range,
     /// Human-readable description of the issue.
     pub message: String,
+    pub hint: Option<String>,
     /// Diagnostic severity.
     pub severity: DiagSeverity,
 }

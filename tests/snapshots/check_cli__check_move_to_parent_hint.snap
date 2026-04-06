@@ -1,0 +1,14 @@
+---
+source: tests/check_cli.rs
+assertion_line: 131
+expression: body
+---
+status: Some(1)
+stdout:
+services/api/ASSUM.md:1:3: warning: assumption `shared_contract` unused
+  hint: delete `# shared_contract` from `services/api/ASSUM.md` or add `@ASSUME:shared_contract` in code
+services/web/ASSUM.md:1:3: warning: assumption `web_only` unused
+  hint: delete `# web_only` from `services/web/ASSUM.md` or add `@ASSUME:web_only` in code
+services/web/app.js:1:4: error: assumption `shared_contract` not defined in scope
+  hint: move `# shared_contract` from `services/api/ASSUM.md` to `services/ASSUM.md` so both directories inherit it, or delete this `@ASSUME:shared_contract` tag
+stderr:

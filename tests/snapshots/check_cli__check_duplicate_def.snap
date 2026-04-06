@@ -1,8 +1,10 @@
 ---
 source: tests/check_cli.rs
+assertion_line: 93
 expression: body
 ---
 status: Some(1)
 stdout:
 ASSUM.md:4:3: error: Duplicate definition of assumption `dup_case` in scope
+  hint: delete this duplicate `# dup_case` heading from `ASSUM.md`
 stderr:
