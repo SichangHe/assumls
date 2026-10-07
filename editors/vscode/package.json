@@ -1,0 +1,49 @@
+{
+  "name": "assumls",
+  "displayName": "AssumLS",
+  "description": "Assumption Language Server for tagging and documenting assumptions in any languages",
+  "version": "0.0.5",
+  "publisher": "SichangHe",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SichangHe/assumls"
+  },
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Linters"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/ASSUM.md"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "AssumLS",
+      "properties": {
+        "assumls.path": {
+          "type": "string",
+          "default": "assumls",
+          "scope": "machine-overridable",
+          "description": "Path to the `assumls` executable."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild extension.js --bundle --platform=node --format=cjs --external:vscode --minify --outfile=dist/extension.js",
+    "vscode:prepublish": "npm run build",
+    "test": "npm run package && node test/run.js",
+    "package": "vsce package --no-dependencies --skip-license"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0"
+  }
+}
